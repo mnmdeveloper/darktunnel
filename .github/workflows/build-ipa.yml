@@ -17,9 +17,30 @@ jobs:
         env:
           P12_BASE64: ${{ secrets.P12_BASE64 }}
           MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
         run: |
-          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          echo "$MOBILEPROVISION_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          set -euo pipefail
+
+          clean_b64() {
+            printf '%s' "$1" | tr -d '\r\n\t '
+          }
+
+          clean_b64 "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          clean_b64 "$MOBILEPROVISION_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+
+          echo "Decoded certificate size: $(stat -f%z "$RUNNER_TEMP/certificate.p12") bytes"
+          echo "Decoded profile size: $(stat -f%z "$RUNNER_TEMP/profile.mobileprovision") bytes"
+
+          if ! openssl pkcs12 -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
+            if LC_ALL=C grep -Eq '^[A-Za-z0-9+/=[:space:]]+$' "$RUNNER_TEMP/certificate.p12"; then
+              echo "Detected double-encoded P12, decoding one more layer"
+              tr -d '\r\n\t ' < "$RUNNER_TEMP/certificate.p12" | base64 --decode > "$RUNNER_TEMP/certificate.fixed.p12"
+              mv "$RUNNER_TEMP/certificate.fixed.p12" "$RUNNER_TEMP/certificate.p12"
+            fi
+          fi
+
+          openssl pkcs12 -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" >/dev/null
 
       - name: Install certificate
         env:
