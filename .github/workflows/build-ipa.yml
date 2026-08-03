@@ -10,8 +10,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install tools
+        run: brew install xcodegen openssl@3
 
       - name: Decode signing files
         env:
@@ -20,6 +20,7 @@ jobs:
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
         run: |
           set -euo pipefail
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
 
           clean_b64() {
             printf '%s' "$1" | tr -d '\r\n\t '
@@ -28,29 +29,27 @@ jobs:
           clean_b64 "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.original.p12"
           clean_b64 "$MOBILEPROVISION_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
 
-          if ! openssl pkcs12 -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
+          if ! "$OPENSSL" pkcs12 -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
             if LC_ALL=C grep -Eq '^[A-Za-z0-9+/=[:space:]]+$' "$RUNNER_TEMP/certificate.original.p12"; then
               tr -d '\r\n\t ' < "$RUNNER_TEMP/certificate.original.p12" | base64 --decode > "$RUNNER_TEMP/certificate.fixed.p12"
               mv "$RUNNER_TEMP/certificate.fixed.p12" "$RUNNER_TEMP/certificate.original.p12"
             fi
           fi
 
-          openssl pkcs12 -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
-
-          openssl pkcs12 \
+          "$OPENSSL" pkcs12 \
             -in "$RUNNER_TEMP/certificate.original.p12" \
             -passin env:P12_PASSWORD \
             -nodes \
             -out "$RUNNER_TEMP/certificate.pem"
 
-          openssl pkcs12 \
+          "$OPENSSL" pkcs12 \
             -export \
             -legacy \
             -in "$RUNNER_TEMP/certificate.pem" \
             -out "$RUNNER_TEMP/certificate.p12" \
             -passout env:P12_PASSWORD
 
-          openssl pkcs12 -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
+          "$OPENSSL" pkcs12 -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
           security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" >/dev/null
           rm -f "$RUNNER_TEMP/certificate.pem" "$RUNNER_TEMP/certificate.original.p12"
 
