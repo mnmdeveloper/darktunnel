@@ -29,7 +29,7 @@ jobs:
           clean_b64 "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.original.p12"
           clean_b64 "$MOBILEPROVISION_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
 
-          if ! "$OPENSSL" pkcs12 -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
+          if ! "$OPENSSL" pkcs12 -legacy -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
             if LC_ALL=C grep -Eq '^[A-Za-z0-9+/=[:space:]]+$' "$RUNNER_TEMP/certificate.original.p12"; then
               tr -d '\r\n\t ' < "$RUNNER_TEMP/certificate.original.p12" | base64 --decode > "$RUNNER_TEMP/certificate.fixed.p12"
               mv "$RUNNER_TEMP/certificate.fixed.p12" "$RUNNER_TEMP/certificate.original.p12"
@@ -37,6 +37,7 @@ jobs:
           fi
 
           "$OPENSSL" pkcs12 \
+            -legacy \
             -in "$RUNNER_TEMP/certificate.original.p12" \
             -passin env:P12_PASSWORD \
             -nodes \
@@ -49,7 +50,7 @@ jobs:
             -out "$RUNNER_TEMP/certificate.p12" \
             -passout env:P12_PASSWORD
 
-          "$OPENSSL" pkcs12 -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
+          "$OPENSSL" pkcs12 -legacy -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
           security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" >/dev/null
           rm -f "$RUNNER_TEMP/certificate.pem" "$RUNNER_TEMP/certificate.original.p12"
 
