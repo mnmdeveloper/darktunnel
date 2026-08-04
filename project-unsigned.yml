@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 9
-    MARKETING_VERSION: 0.4.0
+    CURRENT_PROJECT_VERSION: 10
+    MARKETING_VERSION: 0.4.1
 targets:
   DarkTunnel:
     type: application
@@ -21,6 +21,10 @@ targets:
         UIRequiresFullScreen: true
         UILaunchScreen: {}
         NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLName: app.lavender3512.currant6944
+            CFBundleURLSchemes:
+              - darktunnel
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
