@@ -1,0 +1,36 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, backend-bot-mvp]
+    paths:
+      - 'backend/**'
+      - 'docker-compose.backend.yml'
+      - 'install-backend.sh'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'docker-compose.backend.yml'
+      - 'install-backend.sh'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Compile Python
+        run: python -m compileall -q backend/app
+      - name: Validate Docker Compose
+        env:
+          POSTGRES_PASSWORD: ci-password
+        run: docker compose --env-file <(printf 'POSTGRES_PASSWORD=ci-password\n') -f docker-compose.backend.yml config >/dev/null
+      - name: Build containers
+        env:
+          POSTGRES_PASSWORD: ci-password
+        run: docker compose --env-file <(printf 'POSTGRES_PASSWORD=ci-password\n') -f docker-compose.backend.yml build
