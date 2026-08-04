@@ -30,8 +30,8 @@ final class VPNController: ObservableObject {
         proto.providerConfiguration = [
             "mode": modeIdentifier(for: transport),
             "amneziaHost": "31.77.148.80",
-            "wdttHost": "31.77.148.80",
-            "wdttPort": 56000,
+            "vkTurnHost": "31.77.148.80",
+            "vkTurnPort": 56000,
             "vkCallLink": vkCallLink,
             "mtu": 1280
         ]
@@ -62,9 +62,7 @@ final class VPNController: ObservableObject {
         case .amneziaWG:
             return "amnezia"
         case .vkTurn:
-            return "vk-turn-wireguard"
-        case .wdtt:
-            return "wdtt-wireguard"
+            return "vk-turn-proxy"
         }
     }
 }
