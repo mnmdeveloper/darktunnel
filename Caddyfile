@@ -1,4 +1,4 @@
-{$API_DOMAIN} {
+api.31-77-148-80.sslip.io {
     encode zstd gzip
 
     header {
