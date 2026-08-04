@@ -3,21 +3,27 @@ import SwiftUI
 @main
 struct DarkTunnelApp: App {
     @StateObject private var viewModel = VPNViewModel()
-    @AppStorage("hasCompletedActivation") private var hasCompletedActivation = false
+    @StateObject private var activation = ActivationStore.shared
 
     var body: some Scene {
         WindowGroup {
             Group {
-                if hasCompletedActivation {
+                if activation.isActivated {
                     HomeView()
                         .environmentObject(viewModel)
                 } else {
-                    ActivationView()
+                    BackendActivationView()
+                        .environmentObject(activation)
                 }
             }
             .preferredColorScheme(.dark)
             .onOpenURL { url in
-                viewModel.handleDeepLink(url)
+                if url.scheme?.lowercased() == "darktunnel",
+                   url.host?.lowercased() == "activate" {
+                    activation.handle(url: url)
+                } else {
+                    viewModel.handleDeepLink(url)
+                }
             }
         }
     }
