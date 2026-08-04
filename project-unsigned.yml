@@ -6,14 +6,15 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 5
-    MARKETING_VERSION: 0.3.1
+    CURRENT_PROJECT_VERSION: 6
+    MARKETING_VERSION: 0.3.2
 targets:
   DarkTunnel:
     type: application
     platform: iOS
     sources:
       - path: DarkTunnel
+      - path: Shared
     info:
       path: DarkTunnel/Info.plist
     entitlements:
