@@ -5,6 +5,7 @@ import SwiftUI
 final class VPNViewModel: ObservableObject {
     @Published var state: VPNConnectionState = .disconnected
     @Published var selectedServer: VPNServer = VPNServer.samples[0]
+    @Published var usesAutomaticServer = true
     @Published var speedMode: SpeedMode = .maximum
     @Published var preferredTransport: TransportKind = .automatic
     @Published var disconnectOnSleep = false
@@ -15,6 +16,10 @@ final class VPNViewModel: ObservableObject {
     let servers = VPNServer.samples
 
     var networkName: String { "Wi‑Fi · домашняя сеть" }
+
+    var serverDisplayName: String {
+        usesAutomaticServer ? "Автовыбор" : "\(selectedServer.flag) \(selectedServer.country)"
+    }
 
     var activeTransport: TransportKind {
         switch preferredTransport {
@@ -68,8 +73,21 @@ final class VPNViewModel: ObservableObject {
         LiveActivityController.shared.end()
     }
 
+    func selectAutomaticServer() {
+        usesAutomaticServer = true
+        if let fastest = servers.min(by: { $0.latencyMilliseconds < $1.latencyMilliseconds }) {
+            selectedServer = fastest
+        }
+        reconnectIfNeeded()
+    }
+
     func select(_ server: VPNServer) {
+        usesAutomaticServer = false
         selectedServer = server
+        reconnectIfNeeded()
+    }
+
+    private func reconnectIfNeeded() {
         guard state == .connected else { return }
         state = .reconnecting
         Task {
