@@ -51,7 +51,14 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; the
   ufw allow 443/udp
 fi
 
-"${COMPOSE[@]}" -f docker-compose.backend.yml up -d --build api bot caddy
+# docker-compose v1 can fail with KeyError: ContainerConfig when recreating
+# containers made from newer image metadata. Removing only project containers
+# fixes that while preserving named database/Caddy volumes.
+"${COMPOSE[@]}" -f docker-compose.backend.yml down --remove-orphans || true
+docker ps -aq --filter 'name=darktunnel_' | xargs -r docker rm -f
+
+"${COMPOSE[@]}" -f docker-compose.backend.yml pull caddy db redis || true
+"${COMPOSE[@]}" -f docker-compose.backend.yml up -d --build --force-recreate
 
 for _ in $(seq 1 60); do
   if curl -fsS "https://$DOMAIN/health" >/dev/null 2>&1; then
