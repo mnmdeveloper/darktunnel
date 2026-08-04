@@ -15,10 +15,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         switch activeMode {
         case "amnezia":
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
-        case "vk-turn-wireguard":
-            startVKTurnWireGuardScaffold(configuration: configuration, completionHandler: completionHandler)
-        case "wdtt-wireguard":
-            startWDTTWireGuardScaffold(configuration: configuration, completionHandler: completionHandler)
+        case "vk-turn-proxy":
+            startVKTurnProxyScaffold(configuration: configuration, completionHandler: completionHandler)
         default:
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
         }
@@ -36,34 +34,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
     }
 
-    private func startVKTurnWireGuardScaffold(
+    private func startVKTurnProxyScaffold(
         configuration: [String: Any],
         completionHandler: @escaping (Error?) -> Void
     ) {
-        let host = configuration["wdttHost"] as? String ?? "31.77.148.80"
-        let port = configuration["wdttPort"] as? Int ?? 56000
-        let hasVKLink = !(configuration["vkCallLink"] as? String ?? "").isEmpty
+        let host = configuration["vkTurnHost"] as? String ?? "31.77.148.80"
+        let port = configuration["vkTurnPort"] as? Int ?? 56000
+        let link = configuration["vkCallLink"] as? String ?? ""
+
+        guard !link.isEmpty else {
+            completionHandler(NSError(
+                domain: "DarkTunnel.VKTurn",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "VK call link is required"]
+            ))
+            return
+        }
 
         logger.notice(
-            "Starting VK TURN + WireGuard scaffold at \(host, privacy: .public):\(port, privacy: .public), VK link present: \(hasVKLink, privacy: .public)"
-        )
-
-        applyScaffoldSettings(
-            remoteAddress: host,
-            clientAddress: "10.66.66.2",
-            completionHandler: completionHandler
-        )
-    }
-
-    private func startWDTTWireGuardScaffold(
-        configuration: [String: Any],
-        completionHandler: @escaping (Error?) -> Void
-    ) {
-        let host = configuration["wdttHost"] as? String ?? "31.77.148.80"
-        let port = configuration["wdttPort"] as? Int ?? 56000
-
-        logger.notice(
-            "Starting WDTT + WireGuard fallback scaffold at \(host, privacy: .public):\(port, privacy: .public)"
+            "Starting VK TURN proxy scaffold at \(host, privacy: .public):\(port, privacy: .public)"
         )
 
         applyScaffoldSettings(
@@ -84,6 +73,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             subnetMasks: ["255.255.255.255"]
         )
 
+        // До подключения реального движка маршруты не перехватываем, чтобы не ломать интернет.
         ipv4.includedRoutes = []
         settings.ipv4Settings = ipv4
         settings.dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "1.0.0.1"])
@@ -97,7 +87,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
 
             self?.logger.notice(
-                "Packet Tunnel mode \(self?.activeMode ?? "unknown", privacy: .public) started. Engine integration is the next step."
+                "Packet Tunnel mode \(self?.activeMode ?? "unknown", privacy: .public) started. Real engine integration is next."
             )
             completionHandler(nil)
         }
