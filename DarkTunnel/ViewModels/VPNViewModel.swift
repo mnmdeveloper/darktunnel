@@ -32,7 +32,7 @@ final class VPNViewModel: ObservableObject {
     var activeTransport: TransportKind {
         switch preferredTransport {
         case .automatic:
-            return connectivity.recommendedTransport == .wdtt ? .vkTurn : .amneziaWG
+            return connectivity.recommendedTransport
         case .amneziaWG:
             return .amneziaWG
         case .vkTurn:
