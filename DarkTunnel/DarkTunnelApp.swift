@@ -16,6 +16,9 @@ struct DarkTunnelApp: App {
                 }
             }
             .preferredColorScheme(.dark)
+            .onOpenURL { url in
+                viewModel.handleDeepLink(url)
+            }
         }
     }
 }
