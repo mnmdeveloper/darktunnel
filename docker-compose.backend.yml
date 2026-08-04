@@ -36,5 +36,21 @@ services:
     volumes:
       - /etc/wdtt:/host/etc/wdtt:ro
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - darktunnel_caddy_data:/data
+      - darktunnel_caddy_config:/config
+
 volumes:
   darktunnel_postgres:
+  darktunnel_caddy_data:
+  darktunnel_caddy_config:
