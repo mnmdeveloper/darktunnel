@@ -16,6 +16,7 @@ struct SettingsView: View {
                         speedSection
                         serverSection
                         transportSection
+                        behaviorSection
                         subscriptionSection
                     }
                     .padding(.horizontal, 16)
@@ -48,19 +49,12 @@ struct SettingsView: View {
 
     private var speedSection: some View {
         compactSection("СКОРОСТЬ") {
-            compactOption(
-                icon: "speedometer",
-                title: "Сбалансированная",
-                subtitle: "3 соединения",
-                selected: viewModel.speedMode == .balanced
-            ) { viewModel.speedMode = .balanced }
-
-            compactOption(
-                icon: "bolt.fill",
-                title: "Максимальная",
-                subtitle: "10 соединений",
-                selected: viewModel.speedMode == .maximum
-            ) { viewModel.speedMode = .maximum }
+            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения", selected: viewModel.speedMode == .balanced) {
+                viewModel.speedMode = .balanced
+            }
+            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений", selected: viewModel.speedMode == .maximum) {
+                viewModel.speedMode = .maximum
+            }
         }
     }
 
@@ -79,12 +73,7 @@ struct SettingsView: View {
             .padding(.horizontal, 5)
 
             compactCard {
-                compactOption(
-                    icon: "wand.and.stars",
-                    title: "Автовыбор",
-                    subtitle: "Минимальная задержка",
-                    selected: viewModel.usesAutomaticServer
-                ) {
+                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Минимальная задержка", selected: viewModel.usesAutomaticServer) {
                     viewModel.selectAutomaticServer()
                 }
             }
@@ -111,9 +100,10 @@ struct SettingsView: View {
                             Spacer(minLength: 6)
                             latencyBadge(server.latencyMilliseconds)
 
-                            Image(systemName: !viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id ? "checkmark.circle.fill" : "circle")
+                            let selected = !viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                 .font(.title3)
-                                .foregroundStyle(!viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id ? .white : .secondary)
+                                .foregroundStyle(selected ? .white : .secondary)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 11)
@@ -144,6 +134,35 @@ struct SettingsView: View {
         }
     }
 
+    private var behaviorSection: some View {
+        compactSection("АВТОМАТИКА И УВЕДОМЛЕНИЯ") {
+            toggleRow(
+                icon: "moon.zzz.fill",
+                title: "Выключать при сне",
+                subtitle: "Отключать VPN после блокировки iPhone",
+                isOn: $viewModel.disconnectOnSleep
+            )
+
+            Divider().overlay(.white.opacity(0.07))
+
+            toggleRow(
+                icon: "sunrise.fill",
+                title: "Включать при пробуждении",
+                subtitle: "Подключаться после разблокировки",
+                isOn: $viewModel.reconnectAfterWake
+            )
+
+            Divider().overlay(.white.opacity(0.07))
+
+            toggleRow(
+                icon: "bell.badge.fill",
+                title: "Уведомления через VPN",
+                subtitle: "Направлять трафик Apple Push через туннель",
+                isOn: $viewModel.routeAPNsThroughVPN
+            )
+        }
+    }
+
     private var subscriptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ПОДПИСКА")
@@ -152,9 +171,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 5)
 
-            Button {
-                showingSubscriptionEditor = true
-            } label: {
+            Button { showingSubscriptionEditor = true } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .frame(width: 28)
@@ -185,31 +202,22 @@ struct SettingsView: View {
                 .tracking(1.2)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 5)
-
             compactCard(content: content)
         }
     }
 
     private func compactCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 0) {
-            content()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 3)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        }
+        VStack(spacing: 0) { content() }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(.white.opacity(0.08), lineWidth: 1)
+            }
     }
 
-    private func compactOption(
-        icon: String,
-        title: String,
-        subtitle: String,
-        selected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
+    private func compactOption(icon: String, title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
@@ -226,7 +234,6 @@ struct SettingsView: View {
                 }
 
                 Spacer(minLength: 8)
-
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(selected ? .white : .secondary)
@@ -235,6 +242,30 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func toggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Color(red: 0.42, green: 0.52, blue: 0.62))
+        }
+        .padding(.vertical, 10)
     }
 
     private func latencyBadge(_ value: Int) -> some View {
@@ -255,7 +286,7 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: "link")
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
                     TextField("https://example.com/subscription/...", text: $subscriptionLink)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
