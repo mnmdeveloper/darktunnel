@@ -15,8 +15,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         switch activeMode {
         case "amnezia":
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
-        case "vk-turn-proxy":
-            startVKTurnProxyScaffold(configuration: configuration, completionHandler: completionHandler)
+        case "vk-turn-wrap-a":
+            startVKTurnWrapAScaffold(configuration: configuration, completionHandler: completionHandler)
         default:
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
         }
@@ -34,31 +34,45 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
     }
 
-    private func startVKTurnProxyScaffold(
+    private func startVKTurnWrapAScaffold(
         configuration: [String: Any],
         completionHandler: @escaping (Error?) -> Void
     ) {
         let host = configuration["vkTurnHost"] as? String ?? "31.77.148.80"
         let port = configuration["vkTurnPort"] as? Int ?? 56000
         let link = configuration["vkCallLink"] as? String ?? ""
+        let proxyConfig = configuration["proxy_config"] as? String ?? ""
+        let usesWrapA = configuration["use_wrap_a"] as? Bool ?? false
 
         guard !link.isEmpty else {
-            completionHandler(NSError(
-                domain: "DarkTunnel.VKTurn",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "VK call link is required"]
-            ))
+            completionHandler(makeVKTurnError(code: 1, message: "VK call link is required"))
+            return
+        }
+        guard usesWrapA, !proxyConfig.isEmpty else {
+            completionHandler(makeVKTurnError(code: 2, message: "SRTP-WRAP-A configuration is missing"))
             return
         }
 
         logger.notice(
-            "Starting VK TURN proxy scaffold at \(host, privacy: .public):\(port, privacy: .public)"
+            "VK bootstrap prepared: TURN → SRTP-WRAP-A → \(host, privacy: .public):\(port, privacy: .public)"
         )
+        logger.notice("Next engine step: start bootstrap, wait for TURN, GETCONF, then attach WireGuard")
 
+        // В рабочей реализации настройки сети применяются только после того,
+        // как TURN/SRTP bootstrap завершён и WDTT вернул GETCONF provision.
+        // Пока bridge ещё не встроен, оставляем маршруты пустыми.
         applyScaffoldSettings(
             remoteAddress: host,
             clientAddress: "10.66.66.2",
             completionHandler: completionHandler
+        )
+    }
+
+    private func makeVKTurnError(code: Int, message: String) -> Error {
+        NSError(
+            domain: "DarkTunnel.VKTurn",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
         )
     }
 
@@ -73,7 +87,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             subnetMasks: ["255.255.255.255"]
         )
 
-        // До подключения реального движка маршруты не перехватываем, чтобы не ломать интернет.
         ipv4.includedRoutes = []
         settings.ipv4Settings = ipv4
         settings.dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "1.0.0.1"])
@@ -87,7 +100,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
 
             self?.logger.notice(
-                "Packet Tunnel mode \(self?.activeMode ?? "unknown", privacy: .public) started. Real engine integration is next."
+                "Packet Tunnel mode \(self?.activeMode ?? "unknown", privacy: .public) scaffold started"
             )
             completionHandler(nil)
         }
