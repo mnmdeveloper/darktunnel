@@ -1,4 +1,4 @@
-name: Build experimental signed IPA
+name: Build signed demo IPA
 
 on:
   workflow_dispatch:
@@ -36,16 +36,13 @@ jobs:
             fi
           fi
 
-          "$OPENSSL" pkcs12 \
-            -legacy \
+          "$OPENSSL" pkcs12 -legacy \
             -in "$RUNNER_TEMP/certificate.original.p12" \
             -passin env:P12_PASSWORD \
             -nodes \
             -out "$RUNNER_TEMP/certificate.pem"
 
-          "$OPENSSL" pkcs12 \
-            -export \
-            -legacy \
+          "$OPENSSL" pkcs12 -export -legacy \
             -in "$RUNNER_TEMP/certificate.pem" \
             -out "$RUNNER_TEMP/certificate.p12" \
             -passout env:P12_PASSWORD
@@ -59,15 +56,20 @@ jobs:
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          set -euo pipefail
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security import "$RUNNER_TEMP/certificate.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k build.keychain
           security list-keychain -d user -s build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning build.keychain | awk 'NR==1 {print $2}')
+          test -n "$SIGNING_IDENTITY"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
-      - name: Install one provisioning profile
+      - name: Install provisioning profile
         run: |
+          set -euo pipefail
           PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
           security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$PROFILE_PLIST"
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
@@ -78,10 +80,10 @@ jobs:
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
           echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
 
-      - name: Generate project
-        run: xcodegen generate
+      - name: Generate UI-only demo project
+        run: xcodegen generate --spec project-demo.yml
 
-      - name: Archive with the same profile for both targets
+      - name: Archive demo application
         run: |
           xcodebuild archive \
             -project DarkTunnel.xcodeproj \
@@ -91,11 +93,12 @@ jobs:
             -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             CODE_SIGNING_ALLOWED=YES \
             clean archive
 
-      - name: Export IPA
+      - name: Export demo IPA
         run: |
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -108,7 +111,6 @@ jobs:
             <key>provisioningProfiles</key>
             <dict>
               <key>app.lavender3512.currant6944</key><string>$PROFILE_NAME</string>
-              <key>app.lavender3512.currant6944.PacketTunnel</key><string>$PROFILE_NAME</string>
             </dict>
           </dict>
           </plist>
@@ -121,5 +123,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DarkTunnel-experimental-IPA
+          name: DarkTunnel-demo-IPA
           path: ${{ runner.temp }}/export/*.ipa
