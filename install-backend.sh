@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO="https://github.com/mnmdeveloper/darktunnel.git"
-BRANCH="${DARKTUNNEL_BRANCH:-backend-bot-mvp}"
+BRANCH="${DARKTUNNEL_BRANCH:-main}"
 APP_DIR="/opt/darktunnel"
 TTY="/dev/tty"
 
