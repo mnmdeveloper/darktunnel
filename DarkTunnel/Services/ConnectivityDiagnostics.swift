@@ -18,11 +18,11 @@ struct ConnectivitySnapshot: Equatable {
 
         switch (vk, google) {
         case (.reachable, .blocked):
-            return .wdtt
+            return .vkTurn
         case (.reachable, .reachable), (.blocked, .reachable):
             return .amneziaWG
         case (.blocked, .blocked), (.unknown, .unknown):
-            return .wdtt
+            return .vkTurn
         default:
             return .amneziaWG
         }
@@ -33,13 +33,13 @@ struct ConnectivitySnapshot: Equatable {
 
         switch (vk, google) {
         case (.reachable, .reachable):
-            return "VK и Google доступны"
+            return "VK и внешний интернет доступны"
         case (.reachable, .blocked):
-            return "Доступен VK, внешний интернет ограничен"
+            return "VK доступен, внешний интернет ограничен — нужен режим VK TURN"
         case (.blocked, .reachable):
-            return "Интернет доступен, VK недоступен"
+            return "Внешний интернет доступен, VK недоступен"
         case (.blocked, .blocked):
-            return "Сервисы недоступны — используем резервный транспорт"
+            return "Сервисы недоступны — проверим режим VK TURN"
         default:
             return "Доступность сервисов определяется"
         }
@@ -63,23 +63,13 @@ actor ConnectivityDiagnostics {
     func run() async -> ConnectivitySnapshot {
         let hasPath = await hasSatisfiedPath()
         guard hasPath else {
-            return ConnectivitySnapshot(
-                hasNetworkPath: false,
-                vk: .unknown,
-                google: .unknown,
-                checkedAt: Date()
-            )
+            return ConnectivitySnapshot(hasNetworkPath: false, vk: .unknown, google: .unknown, checkedAt: Date())
         }
 
         async let vkState = probe(url: URL(string: "https://vk.com/favicon.ico")!)
         async let googleState = probe(url: URL(string: "https://www.gstatic.com/generate_204")!)
 
-        return await ConnectivitySnapshot(
-            hasNetworkPath: true,
-            vk: vkState,
-            google: googleState,
-            checkedAt: Date()
-        )
+        return await ConnectivitySnapshot(hasNetworkPath: true, vk: vkState, google: googleState, checkedAt: Date())
     }
 
     private func probe(url: URL) async -> ConnectivitySnapshot.ServiceState {
