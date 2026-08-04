@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,23 @@ from .config import get_settings
 from .models import Activation, AuditLog, Device, User, UserStatus
 from .schemas import ActivationCreate, ActivationRedeem, ActivationResult, ServerProfile
 from .security import create_activation_token, decode_activation_token, generate_refresh_token, hash_token
+
+
+def _read_wdtt_password() -> str:
+    settings = get_settings()
+    path = Path(settings.wdtt_env_path)
+    if not path.is_file():
+        raise ValueError("WDTT configuration is unavailable")
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "WDTT_PASSWORD":
+            secret = value.strip().strip('"').strip("'")
+            if secret:
+                return secret
+    raise ValueError("WDTT password is not configured")
 
 
 async def create_activation(session: AsyncSession, data: ActivationCreate) -> tuple[Activation, str]:
@@ -27,14 +45,7 @@ async def create_activation(session: AsyncSession, data: ActivationCreate) -> tu
 
     token = create_activation_token(str(activation.id), expires_at)
     activation.token_hash = hash_token(token)
-    session.add(
-        AuditLog(
-            admin_id=data.created_by,
-            action="activation.create",
-            entity_type="activation",
-            entity_id=str(activation.id),
-        )
-    )
+    session.add(AuditLog(admin_id=data.created_by, action="activation.create", entity_type="activation", entity_id=str(activation.id)))
     await session.commit()
     await session.refresh(activation)
     return activation, token
@@ -49,15 +60,18 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     now = datetime.now(UTC)
     if activation.revoked_at is not None or activation.link_expires_at < now:
         raise ValueError("Activation link unavailable")
-    if activation.uses >= activation.max_uses:
-        raise ValueError("Activation usage limit reached")
 
     existing_device = await session.scalar(select(Device).where(Device.installation_id == data.installation_id))
     if existing_device is not None:
         user = await session.get(User, existing_device.user_id)
         if user is None or user.status == UserStatus.blocked:
             raise ValueError("User unavailable")
+        if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
+            raise ValueError("Subscription expired")
         return _result(user, existing_device)
+
+    if activation.uses >= activation.max_uses:
+        raise ValueError("Activation usage limit reached")
 
     user = User(
         telegram_id=activation.telegram_id,
@@ -100,6 +114,7 @@ def _result(user: User, device: Device) -> ActivationResult:
             host=settings.wdtt_public_host,
             port=settings.wdtt_public_port,
             mode=settings.wdtt_mode,
+            wrap_a_password=_read_wdtt_password(),
             connections_balanced=settings.wdtt_connections_balanced,
             connections_maximum=settings.wdtt_connections_maximum,
             mtu=settings.wdtt_mtu,
