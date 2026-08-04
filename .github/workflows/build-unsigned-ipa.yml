@@ -13,10 +13,10 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate full project
-        run: xcodegen generate --spec project.yml
+      - name: Generate full unsigned project
+        run: xcodegen generate --spec project-unsigned.yml
 
-      - name: Build app and PacketTunnel without signing
+      - name: Build app and extensions without signing
         run: |
           set -euo pipefail
           xcodebuild build \
@@ -38,20 +38,19 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
           test -d "$APP_PATH"
           test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
+          test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
 
           mkdir -p "$RUNNER_TEMP/package/Payload"
           cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/"
-          rm -rf "$RUNNER_TEMP/package/Payload/DarkTunnel.app/_CodeSignature"
-          rm -f "$RUNNER_TEMP/package/Payload/DarkTunnel.app/embedded.mobileprovision"
-          rm -rf "$RUNNER_TEMP/package/Payload/DarkTunnel.app/PlugIns/PacketTunnel.appex/_CodeSignature"
-          rm -f "$RUNNER_TEMP/package/Payload/DarkTunnel.app/PlugIns/PacketTunnel.appex/embedded.mobileprovision"
+          find "$RUNNER_TEMP/package/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$RUNNER_TEMP/package/Payload" -name embedded.mobileprovision -type f -delete
 
           cd "$RUNNER_TEMP/package"
           /usr/bin/zip -qry "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" Payload
 
       - name: Inspect package
         run: |
-          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/' | head -40
+          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/|DarkTunnelLiveActivity.appex/' | head -80
 
       - uses: actions/upload-artifact@v4
         with:
