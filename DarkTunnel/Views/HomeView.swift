@@ -162,9 +162,7 @@ struct HomeView: View {
                     .lineLimit(1)
 
                 if !vkCallLink.isEmpty {
-                    Button {
-                        vkCallLink = ""
-                    } label: {
+                    Button { vkCallLink = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
@@ -185,7 +183,7 @@ struct HomeView: View {
 
     private var controlsCard: some View {
         VStack(spacing: 0) {
-            row(icon: "globe", title: "Сервер", value: "\(viewModel.selectedServer.flag) \(viewModel.selectedServer.name) · в настройках")
+            row(icon: "globe", title: "Сервер", value: viewModel.serverDisplayName)
             Divider().overlay(.white.opacity(0.1))
             row(icon: "point.3.connected.trianglepath.dotted", title: "Транспорт", value: viewModel.activeTransport.rawValue)
         }
