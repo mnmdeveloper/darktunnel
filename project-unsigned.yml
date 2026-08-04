@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 6
-    MARKETING_VERSION: 0.3.2
+    CURRENT_PROJECT_VERSION: 7
+    MARKETING_VERSION: 0.3.3
 targets:
   DarkTunnel:
     type: application
@@ -38,6 +38,11 @@ targets:
       - path: PacketTunnel
     info:
       path: PacketTunnel/Info.plist
+      properties:
+        CFBundleDisplayName: DarkTunnel Packet Tunnel
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
     entitlements:
       path: PacketTunnel/PacketTunnel.entitlements
     settings:
