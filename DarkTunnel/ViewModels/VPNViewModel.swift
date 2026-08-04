@@ -32,23 +32,18 @@ final class VPNViewModel: ObservableObject {
     var activeTransport: TransportKind {
         switch preferredTransport {
         case .automatic:
-            if connectivity.recommendedTransport == .wdtt {
-                return hasValidVKLink ? .vkTurn : .wdtt
-            }
-            return .amneziaWG
+            return connectivity.recommendedTransport == .wdtt ? .vkTurn : .amneziaWG
         case .amneziaWG:
             return .amneziaWG
         case .vkTurn:
-            return hasValidVKLink ? .vkTurn : .wdtt
-        case .wdtt:
-            return .wdtt
+            return .vkTurn
         }
     }
 
     var statusDetail: String {
         switch state {
         case .disconnected: return connectionError ?? connectivity.summary
-        case .connecting: return "Проверяем VK и внешний интернет, затем выбираем транспорт"
+        case .connecting: return "Проверяем VK и внешний интернет, затем выбираем режим"
         case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
         case .reconnecting: return "Переключаем сервер"
         }
@@ -81,17 +76,24 @@ final class VPNViewModel: ObservableObject {
         Task {
             connectivity = await ConnectivityDiagnostics.shared.run()
             guard connectivity.hasNetworkPath else {
-                connectionError = "Нет доступа к интернету"
+                connectionError = "Нет доступа к сети"
+                state = .disconnected
+                return
+            }
+
+            let chosenTransport = activeTransport
+            if chosenTransport == .vkTurn && !hasValidVKLink {
+                connectionError = "Для режима VK TURN вставьте ссылку на VK-звонок"
                 state = .disconnected
                 return
             }
 
             do {
-                try await VPNController.shared.connect(transport: activeTransport, vkCallLink: vkCallLink)
+                try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: vkCallLink)
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
                 if liveActivitiesEnabled {
-                    LiveActivityController.shared.start(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: activeTransport.rawValue)
+                    LiveActivityController.shared.start(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: chosenTransport.rawValue)
                 }
             } catch {
                 connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
