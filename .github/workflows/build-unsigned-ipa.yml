@@ -18,7 +18,7 @@ jobs:
 
       - name: Build app and PacketTunnel without signing
         run: |
-          set -euo pipefail
+          set +e
           xcodebuild build \
             -project DarkTunnel.xcodeproj \
             -scheme DarkTunnel \
@@ -31,6 +31,14 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             DEVELOPMENT_TEAM='' \
             clean build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo
+            echo '================ ACTUAL XCODE ERRORS ================'
+            grep -nE '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -120 || true
+            echo '====================================================='
+            exit "$STATUS"
+          fi
 
       - name: Package unsigned IPA
         run: |
