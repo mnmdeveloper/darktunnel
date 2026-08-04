@@ -11,6 +11,12 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = false
     @Published var reconnectAfterWake = true
     @Published var routeAPNsThroughVPN = false
+    @Published var connectivity = ConnectivitySnapshot(
+        hasNetworkPath: true,
+        vk: .unknown,
+        google: .unknown,
+        checkedAt: Date()
+    )
     @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
@@ -22,7 +28,7 @@ final class VPNViewModel: ObservableObject {
 
     let servers = VPNServer.samples
 
-    var networkName: String { "Wi‑Fi · домашняя сеть" }
+    var networkName: String { "Текущая сеть" }
 
     var serverDisplayName: String {
         usesAutomaticServer ? "Автовыбор" : "\(selectedServer.flag) \(selectedServer.country)"
@@ -30,7 +36,7 @@ final class VPNViewModel: ObservableObject {
 
     var activeTransport: TransportKind {
         switch preferredTransport {
-        case .automatic: return networkName.contains("Wi") ? .amneziaWG : .wdtt
+        case .automatic: return connectivity.recommendedTransport
         case .amneziaWG: return .amneziaWG
         case .wdtt: return .wdtt
         }
@@ -38,10 +44,14 @@ final class VPNViewModel: ObservableObject {
 
     var statusDetail: String {
         switch state {
-        case .disconnected: return connectionError ?? "Трафик идёт напрямую"
-        case .connecting: return "Создаём системный VPN-профиль"
-        case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
-        case .reconnecting: return "Переключаем сервер"
+        case .disconnected:
+            return connectionError ?? connectivity.summary
+        case .connecting:
+            return "Проверяем VK и Google, затем выбираем транспорт"
+        case .connected:
+            return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
+        case .reconnecting:
+            return "Переключаем сервер"
         }
     }
 
@@ -54,6 +64,12 @@ final class VPNViewModel: ObservableObject {
         UserDefaults.standard.set(vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "vkCallLink")
     }
 
+    func refreshConnectivity() {
+        Task {
+            connectivity = await ConnectivityDiagnostics.shared.run()
+        }
+    }
+
     func toggleConnection() {
         switch state {
         case .disconnected: connect()
@@ -64,11 +80,23 @@ final class VPNViewModel: ObservableObject {
     func connect() {
         connectionError = nil
         state = .connecting
+
         Task {
+            connectivity = await ConnectivityDiagnostics.shared.run()
+            guard connectivity.hasNetworkPath else {
+                connectionError = "Нет доступа к интернету"
+                state = .disconnected
+                return
+            }
+
             do {
-                try await VPNController.shared.connect()
+                try await VPNController.shared.connect(
+                    transport: activeTransport,
+                    vkCallLink: vkCallLink
+                )
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
+
                 if liveActivitiesEnabled {
                     LiveActivityController.shared.start(
                         server: selectedServer.city,
