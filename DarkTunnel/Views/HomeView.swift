@@ -6,6 +6,11 @@ struct HomeView: View {
     @AppStorage("vkCallLink") private var vkCallLink = ""
     @State private var camera: MapCameraPosition = .region(Self.moscowRegion)
     @State private var showingSettings = false
+    @State private var isRefreshingSubscription = false
+    @State private var lastRefreshText = "обновлено сейчас"
+
+    private let blueGray = Color(red: 0.37, green: 0.47, blue: 0.58)
+    private let panel = Color(red: 0.08, green: 0.10, blue: 0.13)
 
     private static let moscowRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173),
@@ -19,14 +24,14 @@ struct HomeView: View {
                 .ignoresSafeArea()
 
             LinearGradient(
-                colors: [.black.opacity(0.08), .clear, .black.opacity(0.78)],
+                colors: [.black.opacity(0.30), .clear, .black.opacity(0.84)],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                header
+                subscriptionHeader
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 
@@ -50,47 +55,91 @@ struct HomeView: View {
         .onChange(of: viewModel.selectedServer) { _, _ in moveCamera() }
     }
 
-    private var header: some View {
-        HStack(spacing: 11) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(.cyan)
+    private var subscriptionHeader: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle().fill(blueGray.opacity(0.18))
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(blueGray)
+                }
                 .frame(width: 40, height: 40)
-                .background(.thinMaterial, in: Circle())
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("DarkTunnel")
-                    .font(.headline.weight(.bold))
-                Text(viewModel.networkName)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("DarkTunnel")
+                        .font(.headline.weight(.bold))
+                    Text("Подписка активна · \(lastRefreshText)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
-            Spacer()
-
-            HStack(spacing: 8) {
-                Text(viewModel.serverDisplayName)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .foregroundStyle(.secondary)
+                Spacer()
 
                 Button { showingSettings = true } label: {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
                         .frame(width: 38, height: 38)
-                        .background(.thinMaterial, in: Circle())
+                        .background(panel.opacity(0.92), in: Circle())
                 }
                 .buttonStyle(.plain)
             }
+
+            HStack(spacing: 8) {
+                metricPill(icon: "calendar", title: "29 дней", subtitle: "до окончания")
+                metricPill(icon: "arrow.up.arrow.down", title: "8.2 / 30 ГБ", subtitle: "использовано")
+            }
+
+            Button {
+                refreshSubscription()
+            } label: {
+                HStack(spacing: 7) {
+                    if isRefreshingSubscription {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    Text(isRefreshingSubscription ? "Обновляем данные…" : "Обновить подписку")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(blueGray.opacity(0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isRefreshingSubscription)
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(14)
+        .background(panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
+                .stroke(.white.opacity(0.09), lineWidth: 1)
         }
+    }
+
+    private func metricPill(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(blueGray)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var bottomPanel: some View {
@@ -126,7 +175,13 @@ struct HomeView: View {
                 }
             }
 
-            Divider().overlay(.white.opacity(0.09))
+            Text("Выбранный сервер и транспорт будут применены при следующем подключении. Автовыбор использует канал с наименьшей задержкой.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(.white.opacity(0.08))
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("ССЫЛКА НА VK-ЗВОНОК")
@@ -136,7 +191,7 @@ struct HomeView: View {
 
                 HStack(spacing: 9) {
                     Image(systemName: "link")
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(blueGray)
 
                     TextField("https://vk.me/call/join/...", text: $vkCallLink)
                         .textInputAutocapitalization(.never)
@@ -154,7 +209,7 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 11)
-                .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             Button(action: viewModel.toggleConnection) {
@@ -175,18 +230,28 @@ struct HomeView: View {
             .buttonStyle(.plain)
         }
         .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .background(panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
+                .stroke(.white.opacity(0.10), lineWidth: 1)
         }
     }
 
     private var statusColor: Color {
         switch viewModel.state {
-        case .connected: return .mint
-        case .connecting, .reconnecting: return .yellow
+        case .connected: return blueGray
+        case .connecting, .reconnecting: return .white
         case .disconnected: return .secondary
+        }
+    }
+
+    private func refreshSubscription() {
+        guard !isRefreshingSubscription else { return }
+        isRefreshingSubscription = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(850))
+            isRefreshingSubscription = false
+            lastRefreshText = "обновлено только что"
         }
     }
 
