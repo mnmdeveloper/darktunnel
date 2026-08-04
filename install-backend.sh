@@ -31,13 +31,8 @@ if docker compose version >/dev/null 2>&1; then
 elif command -v docker-compose >/dev/null 2>&1; then
   COMPOSE=(docker-compose)
 else
-  curl -fsSL https://get.docker.com | sh
-  if docker compose version >/dev/null 2>&1; then
-    COMPOSE=(docker compose)
-  else
-    apt-get install -y docker-compose
-    COMPOSE=(docker-compose)
-  fi
+  apt-get install -y docker-compose
+  COMPOSE=(docker-compose)
 fi
 
 systemctl enable --now docker
@@ -98,17 +93,17 @@ EOF
 chmod 600 "$APP_DIR/.env" "$APP_DIR/backend/.env"
 
 cd "$APP_DIR"
-"${COMPOSE[@]}" --env-file .env -f docker-compose.backend.yml up -d --build
+"${COMPOSE[@]}" -f docker-compose.backend.yml up -d --build
 
 for _ in $(seq 1 45); do
   if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
     echo "DarkTunnel backend and Telegram bot installed successfully."
-    "${COMPOSE[@]}" --env-file .env -f docker-compose.backend.yml ps
+    "${COMPOSE[@]}" -f docker-compose.backend.yml ps
     exit 0
   fi
   sleep 2
 done
 
 echo "Health check failed. Recent logs:"
-"${COMPOSE[@]}" --env-file .env -f docker-compose.backend.yml logs --tail=160 api bot
+"${COMPOSE[@]}" -f docker-compose.backend.yml logs --tail=160 api bot
 exit 1
