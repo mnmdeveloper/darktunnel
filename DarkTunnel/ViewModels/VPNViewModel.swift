@@ -11,6 +11,13 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = false
     @Published var reconnectAfterWake = true
     @Published var routeAPNsThroughVPN = false
+    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
+            if !liveActivitiesEnabled { LiveActivityController.shared.end() }
+        }
+    }
+    @Published var connectionError: String?
     @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
 
     let servers = VPNServer.samples
@@ -31,8 +38,8 @@ final class VPNViewModel: ObservableObject {
 
     var statusDetail: String {
         switch state {
-        case .disconnected: return "Трафик идёт напрямую"
-        case .connecting: return "Подготавливаем защищённый канал"
+        case .disconnected: return connectionError ?? "Трафик идёт напрямую"
+        case .connecting: return "Создаём системный VPN-профиль"
         case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
         case .reconnecting: return "Переключаем сервер"
         }
@@ -55,22 +62,36 @@ final class VPNViewModel: ObservableObject {
     }
 
     func connect() {
+        connectionError = nil
         state = .connecting
         Task {
-            try? await Task.sleep(for: .milliseconds(700))
-            guard state == .connecting else { return }
-            withAnimation(.snappy(duration: 0.35)) { state = .connected }
-            LiveActivityController.shared.start(
-                server: selectedServer.city,
-                latency: selectedServer.latencyMilliseconds,
-                transport: activeTransport.rawValue
-            )
+            do {
+                try await VPNController.shared.connect()
+                guard state == .connecting else { return }
+                withAnimation(.snappy(duration: 0.35)) { state = .connected }
+                if liveActivitiesEnabled {
+                    LiveActivityController.shared.start(
+                        server: selectedServer.city,
+                        latency: selectedServer.latencyMilliseconds,
+                        transport: activeTransport.rawValue
+                    )
+                }
+            } catch {
+                connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
+                state = .disconnected
+            }
         }
     }
 
     func disconnect() {
+        VPNController.shared.disconnect()
         withAnimation(.snappy(duration: 0.3)) { state = .disconnected }
         LiveActivityController.shared.end()
+    }
+
+    func handleDeepLink(_ url: URL) {
+        guard url.scheme == "darktunnel", url.host == "disconnect" else { return }
+        disconnect()
     }
 
     func selectAutomaticServer() {
@@ -94,11 +115,13 @@ final class VPNViewModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(500))
             guard state == .reconnecting else { return }
             state = .connected
-            LiveActivityController.shared.update(
-                server: selectedServer.city,
-                latency: selectedServer.latencyMilliseconds,
-                transport: activeTransport.rawValue
-            )
+            if liveActivitiesEnabled {
+                LiveActivityController.shared.update(
+                    server: selectedServer.city,
+                    latency: selectedServer.latencyMilliseconds,
+                    transport: activeTransport.rawValue
+                )
+            }
         }
     }
 }
