@@ -31,6 +31,7 @@ class ServerProfile(BaseModel):
     host: str
     port: int
     mode: str
+    wrap_a_password: str
     connections_balanced: int
     connections_maximum: int
     mtu: int
