@@ -23,12 +23,8 @@ struct HomeView: View {
                 .mapStyle(.standard(elevation: .flat, emphasis: .muted))
                 .ignoresSafeArea()
 
-            LinearGradient(
-                colors: [.black.opacity(0.30), .clear, .black.opacity(0.84)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            LinearGradient(colors: [.black.opacity(0.30), .clear, .black.opacity(0.84)], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 subscriptionHeader
@@ -67,8 +63,7 @@ struct HomeView: View {
                 .frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("DarkTunnel")
-                        .font(.headline.weight(.bold))
+                    Text("DarkTunnel").font(.headline.weight(.bold))
                     Text("Подписка активна · \(lastRefreshText)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -91,9 +86,7 @@ struct HomeView: View {
                 metricPill(icon: "arrow.up.arrow.down", title: "8.2 / 30 ГБ", subtitle: "использовано")
             }
 
-            Button {
-                refreshSubscription()
-            } label: {
+            Button(action: refreshSubscription) {
                 HStack(spacing: 7) {
                     if isRefreshingSubscription {
                         ProgressView().controlSize(.small).tint(.white)
@@ -113,27 +106,16 @@ struct HomeView: View {
         }
         .padding(14)
         .background(panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.09), lineWidth: 1)
-        }
+        .overlay { RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(.white.opacity(0.09), lineWidth: 1) }
     }
 
     private func metricPill(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(blueGray)
-                .frame(width: 22)
-
+            Image(systemName: icon).foregroundStyle(blueGray).frame(width: 22)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.white)
+                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
             }
-
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 11)
@@ -149,37 +131,23 @@ struct HomeView: View {
                     HStack(spacing: 7) {
                         Image(systemName: viewModel.state == .connected ? "checkmark.shield.fill" : "shield")
                             .foregroundStyle(statusColor)
-                        Text(viewModel.state.title)
-                            .font(.headline.weight(.semibold))
+                        Text(viewModel.state.title).font(.headline.weight(.semibold))
                     }
-
                     Text(viewModel.state == .connected ? viewModel.selectedServer.city : "Москва")
                         .font(.title2.weight(.bold))
-
                     Text(viewModel.statusDetail)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .foregroundStyle(viewModel.connectionError == nil ? .secondary : .red)
+                        .lineLimit(2)
                 }
 
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text(viewModel.serverDisplayName)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(viewModel.activeTransport.rawValue)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Text(viewModel.serverDisplayName).font(.caption.weight(.semibold)).lineLimit(1)
+                    Text(viewModel.activeTransport.rawValue).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-
-            Text("Выбранный сервер и транспорт будут применены при следующем подключении. Автовыбор использует канал с наименьшей задержкой.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
 
             Divider().overlay(.white.opacity(0.08))
 
@@ -190,19 +158,15 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 9) {
-                    Image(systemName: "link")
-                        .foregroundStyle(blueGray)
-
+                    Image(systemName: "link").foregroundStyle(blueGray)
                     TextField("https://vk.me/call/join/...", text: $vkCallLink)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
                         .lineLimit(1)
-
                     if !vkCallLink.isEmpty {
                         Button { vkCallLink = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -231,10 +195,7 @@ struct HomeView: View {
         }
         .padding(16)
         .background(panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.10), lineWidth: 1)
-        }
+        .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(.white.opacity(0.10), lineWidth: 1) }
     }
 
     private var statusColor: Color {
