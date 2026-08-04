@@ -49,10 +49,10 @@ struct SettingsView: View {
 
     private var speedSection: some View {
         compactSection("СКОРОСТЬ") {
-            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения", selected: viewModel.speedMode == .balanced) {
+            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения — быстрее запускается и расходует меньше батареи", selected: viewModel.speedMode == .balanced) {
                 viewModel.speedMode = .balanced
             }
-            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений", selected: viewModel.speedMode == .maximum) {
+            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений — выше скорость при хорошем канале", selected: viewModel.speedMode == .maximum) {
                 viewModel.speedMode = .maximum
             }
         }
@@ -73,7 +73,7 @@ struct SettingsView: View {
             .padding(.horizontal, 5)
 
             compactCard {
-                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Минимальная задержка", selected: viewModel.usesAutomaticServer) {
+                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Приложение использует сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) {
                     viewModel.selectAutomaticServer()
                 }
             }
@@ -84,22 +84,13 @@ struct SettingsView: View {
                         viewModel.select(server)
                     } label: {
                         HStack(spacing: 12) {
-                            Text(server.flag)
-                                .font(.title3)
-                                .frame(width: 28)
-
+                            Text(server.flag).font(.title3).frame(width: 28)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(server.country)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                Text(server.city)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                Text(server.country).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                                Text(server.city).font(.caption2).foregroundStyle(.secondary)
                             }
-
                             Spacer(minLength: 6)
                             latencyBadge(server.latencyMilliseconds)
-
                             let selected = !viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id
                             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                                 .font(.title3)
@@ -125,7 +116,7 @@ struct SettingsView: View {
                 compactOption(
                     icon: "point.3.connected.trianglepath.dotted",
                     title: transport.rawValue,
-                    subtitle: transport == .automatic ? "По текущей сети" : "Использовать канал",
+                    subtitle: transport == .automatic ? "Подбирать канал автоматически по текущей сети" : "Всегда использовать этот способ подключения",
                     selected: viewModel.preferredTransport == transport
                 ) {
                     viewModel.preferredTransport = transport
@@ -136,30 +127,13 @@ struct SettingsView: View {
 
     private var behaviorSection: some View {
         compactSection("АВТОМАТИКА И УВЕДОМЛЕНИЯ") {
-            toggleRow(
-                icon: "moon.zzz.fill",
-                title: "Выключать при сне",
-                subtitle: "Отключать VPN после блокировки iPhone",
-                isOn: $viewModel.disconnectOnSleep
-            )
-
+            toggleRow(icon: "moon.zzz.fill", title: "Выключать при сне", subtitle: "Отключать VPN после блокировки iPhone", isOn: $viewModel.disconnectOnSleep)
             Divider().overlay(.white.opacity(0.07))
-
-            toggleRow(
-                icon: "sunrise.fill",
-                title: "Включать при пробуждении",
-                subtitle: "Подключаться после разблокировки",
-                isOn: $viewModel.reconnectAfterWake
-            )
-
+            toggleRow(icon: "sunrise.fill", title: "Включать при пробуждении", subtitle: "Подключаться после разблокировки", isOn: $viewModel.reconnectAfterWake)
             Divider().overlay(.white.opacity(0.07))
-
-            toggleRow(
-                icon: "bell.badge.fill",
-                title: "Уведомления через VPN",
-                subtitle: "Направлять трафик Apple Push через туннель",
-                isOn: $viewModel.routeAPNsThroughVPN
-            )
+            toggleRow(icon: "bell.badge.fill", title: "Уведомления через VPN", subtitle: "Направлять трафик Apple Push через туннель", isOn: $viewModel.routeAPNsThroughVPN)
+            Divider().overlay(.white.opacity(0.07))
+            toggleRow(icon: "rectangle.on.rectangle.angled", title: "Live Activity и Dynamic Island", subtitle: "Показывать сервер, пинг и кнопку отключения на экране блокировки и в островке", isOn: $viewModel.liveActivitiesEnabled)
         }
     }
 
@@ -173,22 +147,19 @@ struct SettingsView: View {
 
             Button { showingSubscriptionEditor = true } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .frame(width: 28)
-                    Text("Сменить ссылку активации")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    Image(systemName: "arrow.triangle.2.circlepath").frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Сменить ссылку активации").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        Text("Заменить источник данных подписки и серверных настроек").font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tertiary)
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1)
                 }
             }
             .buttonStyle(.plain)
@@ -197,11 +168,7 @@ struct SettingsView: View {
 
     private func compactSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.bold))
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 5)
+            Text(title).font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary).padding(.leading, 5)
             compactCard(content: content)
         }
     }
@@ -211,32 +178,19 @@ struct SettingsView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 3)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
-            }
+            .overlay { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1) }
     }
 
     private func compactOption(icon: String, title: String, subtitle: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.body.weight(.semibold))
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                Image(systemName: icon).font(.body.weight(.semibold)).frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-
                 Spacer(minLength: 8)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(selected ? .white : .secondary)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.title3).foregroundStyle(selected ? .white : .secondary)
             }
             .padding(.vertical, 10)
             .contentShape(Rectangle())
@@ -250,20 +204,12 @@ struct SettingsView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
                 .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(subtitle).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-
             Spacer(minLength: 8)
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .tint(Color(red: 0.42, green: 0.52, blue: 0.62))
+            Toggle("", isOn: isOn).labelsHidden().tint(Color(red: 0.42, green: 0.52, blue: 0.62))
         }
         .padding(.vertical, 10)
     }
@@ -272,8 +218,7 @@ struct SettingsView: View {
         let tint: Color = value < 70 ? .green : (value < 130 ? .yellow : .orange)
         return HStack(spacing: 4) {
             Circle().fill(tint).frame(width: 6, height: 6)
-            Text("\(value) мс")
-                .font(.caption2.monospacedDigit().weight(.semibold))
+            Text("\(value) мс").font(.caption2.monospacedDigit().weight(.semibold))
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 9)
@@ -285,8 +230,7 @@ struct SettingsView: View {
         NavigationStack {
             VStack(spacing: 14) {
                 HStack(spacing: 10) {
-                    Image(systemName: "link")
-                        .foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
+                    Image(systemName: "link").foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
                     TextField("https://example.com/subscription/...", text: $subscriptionLink)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -294,10 +238,7 @@ struct SettingsView: View {
                 }
                 .padding(14)
                 .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                Text("Ссылка хранится только на этом iPhone.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Ссылка хранится только на этом iPhone.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(18)
@@ -305,8 +246,7 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Готово") { showingSubscriptionEditor = false }
-                        .fontWeight(.semibold)
+                    Button("Готово") { showingSubscriptionEditor = false }.fontWeight(.semibold)
                 }
             }
         }
