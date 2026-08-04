@@ -22,7 +22,6 @@ final class VPNViewModel: ObservableObject {
     @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
 
     let servers = VPNServer.samples
-
     var networkName: String { "Текущая сеть" }
 
     var serverDisplayName: String {
@@ -32,7 +31,7 @@ final class VPNViewModel: ObservableObject {
     var activeTransport: TransportKind {
         switch preferredTransport {
         case .automatic:
-            return connectivity.recommendedTransport
+            return .vkTurn
         case .amneziaWG:
             return .amneziaWG
         case .vkTurn:
@@ -43,27 +42,17 @@ final class VPNViewModel: ObservableObject {
     var statusDetail: String {
         switch state {
         case .disconnected: return connectionError ?? connectivity.summary
-        case .connecting: return "Проверяем VK и внешний интернет, затем выбираем режим"
+        case .connecting: return "Подключаем VK TURN и защищённый туннель"
         case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
         case .reconnecting: return "Переключаем сервер"
         }
     }
 
-    private var normalizedVKLink: String {
-        vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private var normalizedVKLink: String { vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var hasValidVKLink: Bool {
-        guard let url = URL(string: normalizedVKLink),
-              let scheme = url.scheme?.lowercased(),
-              let host = url.host?.lowercased(),
-              scheme == "https" || scheme == "http" else {
-            return false
-        }
-
-        let validHost = host == "vk.ru" || host.hasSuffix(".vk.ru") ||
-            host == "vk.com" || host.hasSuffix(".vk.com") ||
-            host == "vk.me" || host.hasSuffix(".vk.me")
+        guard let url = URL(string: normalizedVKLink), let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+        let validHost = host == "vk.ru" || host.hasSuffix(".vk.ru") || host == "vk.com" || host.hasSuffix(".vk.com") || host == "vk.me" || host.hasSuffix(".vk.me")
         let validPath = url.path.contains("/call/") || url.path.contains("/call/join/")
         return validHost && validPath
     }
@@ -73,9 +62,7 @@ final class VPNViewModel: ObservableObject {
         UserDefaults.standard.set(vkCallLink, forKey: "vkCallLink")
     }
 
-    func refreshConnectivity() {
-        Task { connectivity = await ConnectivityDiagnostics.shared.run() }
-    }
+    func refreshConnectivity() { Task { connectivity = await ConnectivityDiagnostics.shared.run() } }
 
     func toggleConnection() {
         switch state {
@@ -87,12 +74,14 @@ final class VPNViewModel: ObservableObject {
     func connect() {
         connectionError = nil
         state = .connecting
+        AppLog.shared.info("UI", "Пользователь запустил подключение")
 
         Task {
             connectivity = await ConnectivityDiagnostics.shared.run()
             guard connectivity.hasNetworkPath else {
                 connectionError = "Нет доступа к сети"
                 state = .disconnected
+                AppLog.shared.error("Network", "Нет доступного сетевого пути")
                 return
             }
 
@@ -100,10 +89,14 @@ final class VPNViewModel: ObservableObject {
             if chosenTransport == .vkTurn && !hasValidVKLink {
                 connectionError = "Вставьте полную ссылку VK-звонка вида https://vk.ru/call/join/..."
                 state = .disconnected
+                AppLog.shared.warning("VPN", "Подключение отменено: отсутствует корректная VK-ссылка")
                 return
             }
 
             saveVKLink()
+            let profile = ActivationStore.shared.serverProfile
+            let connections = speedMode == .balanced ? (profile?.connectionsBalanced ?? 3) : (profile?.connectionsMaximum ?? 10)
+            UserDefaults.standard.set(connections, forKey: "vkTurnConnections")
 
             do {
                 try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: normalizedVKLink)
@@ -115,6 +108,7 @@ final class VPNViewModel: ObservableObject {
             } catch {
                 connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
                 state = .disconnected
+                AppLog.shared.error("VPN", error.localizedDescription)
             }
         }
     }
