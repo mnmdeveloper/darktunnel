@@ -3,7 +3,7 @@ import MapKit
 
 struct HomeView: View {
     @EnvironmentObject private var viewModel: VPNViewModel
-    @AppStorage("vkCallLink") private var vkCallLink = ""
+    @AppStorage("vkTurnServerPassword") private var vkTurnServerPassword = ""
     @State private var camera: MapCameraPosition = .region(Self.moscowRegion)
     @State private var showingSettings = false
     @State private var isRefreshingSubscription = false
@@ -162,6 +162,7 @@ struct HomeView: View {
             connectionStatusRow
             Divider().overlay(.white.opacity(0.08))
             vkLinkField
+            serverPasswordField
             connectButton
         }
         .padding(16)
@@ -188,13 +189,13 @@ struct HomeView: View {
                 Text(viewModel.statusDetail)
                     .font(.caption)
                     .foregroundStyle(statusDetailColor)
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
 
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(viewModel.serverDisplayName)
+                Text("31.77.148.80")
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Text(viewModel.activeTransport.rawValue)
@@ -216,14 +217,44 @@ struct HomeView: View {
                 Image(systemName: "link")
                     .foregroundStyle(blueGray)
 
-                TextField("https://vk.me/call/join/...", text: $vkCallLink)
+                TextField("https://vk.me/call/join/...", text: $viewModel.vkCallLink)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     .autocorrectionDisabled()
                     .lineLimit(1)
 
-                if !vkCallLink.isEmpty {
-                    Button { vkCallLink = "" } label: {
+                if !viewModel.vkCallLink.isEmpty {
+                    Button { viewModel.vkCallLink = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(.black.opacity(0.30), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private var serverPasswordField: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("ГЛАВНЫЙ ПАРОЛЬ ТУННЕЛЯ")
+                .font(.caption2.weight(.bold))
+                .tracking(1.0)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 9) {
+                Image(systemName: "key.fill")
+                    .foregroundStyle(blueGray)
+
+                SecureField("Пароль WDTT с сервера", text: $vkTurnServerPassword)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .lineLimit(1)
+
+                if !vkTurnServerPassword.isEmpty {
+                    Button { vkTurnServerPassword = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.secondary)
                     }
@@ -269,7 +300,7 @@ struct HomeView: View {
     }
 
     private var connectionCity: String {
-        viewModel.state == .connected ? viewModel.selectedServer.city : "Москва"
+        viewModel.state == .connected ? "VPN" : "Москва"
     }
 
     private var statusDetailColor: Color {
@@ -295,17 +326,8 @@ struct HomeView: View {
     }
 
     private func moveCamera() {
-        let center = viewModel.state == .connected
-            ? viewModel.selectedServer.coordinate
-            : Self.moscowRegion.center
-
         withAnimation(.smooth(duration: 1.0)) {
-            camera = .region(
-                MKCoordinateRegion(
-                    center: center,
-                    span: MKCoordinateSpan(latitudeDelta: 0.34, longitudeDelta: 0.34)
-                )
-            )
+            camera = .region(Self.moscowRegion)
         }
     }
 }
