@@ -19,29 +19,26 @@ struct HomeView: View {
                 .ignoresSafeArea()
 
             LinearGradient(
-                colors: [.black.opacity(0.10), .black.opacity(0.34), .black.opacity(0.88)],
+                colors: [.black.opacity(0.08), .clear, .black.opacity(0.78)],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 14) {
-                    header
-                    Spacer(minLength: 150)
-                    statusCard
-                    vkCard
-                    controlsCard
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 34)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                Spacer(minLength: 24)
+
+                bottomPanel
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 18)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
-        .ignoresSafeArea(edges: .bottom)
         .sheet(isPresented: $showingSettings) {
             SettingsView()
                 .environmentObject(viewModel)
@@ -54,73 +51,114 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 11) {
             Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.cyan)
-                .frame(width: 44, height: 44)
+                .frame(width: 40, height: 40)
                 .background(.thinMaterial, in: Circle())
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("DarkTunnel")
-                    .font(.title3.weight(.bold))
+                    .font(.headline.weight(.bold))
                 Text(viewModel.networkName)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Button { showingSettings = true } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .background(.thinMaterial, in: Circle())
+            HStack(spacing: 8) {
+                Text(viewModel.serverDisplayName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .foregroundStyle(.secondary)
+
+                Button { showingSettings = true } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 38, height: 38)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
-        .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.14), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(.white.opacity(0.12), lineWidth: 1)
         }
     }
 
-    private var statusCard: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .center, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(viewModel.state.title.uppercased())
-                        .font(.caption.weight(.bold))
-                        .tracking(1.5)
-                        .foregroundStyle(statusColor)
+    private var bottomPanel: some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Image(systemName: viewModel.state == .connected ? "checkmark.shield.fill" : "shield")
+                            .foregroundStyle(statusColor)
+                        Text(viewModel.state.title)
+                            .font(.headline.weight(.semibold))
+                    }
 
                     Text(viewModel.state == .connected ? viewModel.selectedServer.city : "Москва")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        .font(.title2.weight(.bold))
 
                     Text(viewModel.statusDetail)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
 
-                ZStack {
-                    Circle().fill(.thinMaterial)
-                    Circle()
-                        .stroke(statusColor.opacity(0.8), lineWidth: 7)
-                        .padding(6)
-                    Image(systemName: viewModel.state == .connected ? "lock.fill" : "lock.open.fill")
-                        .font(.title2.weight(.bold))
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(viewModel.serverDisplayName)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(viewModel.activeTransport.rawValue)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .frame(width: 82, height: 82)
+            }
+
+            Divider().overlay(.white.opacity(0.09))
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("ССЫЛКА НА VK-ЗВОНОК")
+                    .font(.caption2.weight(.bold))
+                    .tracking(1.0)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 9) {
+                    Image(systemName: "link")
+                        .foregroundStyle(.cyan)
+
+                    TextField("https://vk.me/call/join/...", text: $vkCallLink)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                        .lineLimit(1)
+
+                    if !vkCallLink.isEmpty {
+                        Button { vkCallLink = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             Button(action: viewModel.toggleConnection) {
-                HStack(spacing: 10) {
+                HStack(spacing: 9) {
                     if viewModel.state == .connecting || viewModel.state == .reconnecting {
                         ProgressView().tint(.black)
                     } else {
@@ -131,47 +169,10 @@ struct HomeView: View {
                 .font(.headline)
                 .foregroundStyle(.black)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 17)
-                .background(.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.vertical, 14)
+                .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
-        }
-        .padding(22)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .stroke(.white.opacity(0.14), lineWidth: 1)
-        }
-    }
-
-    private var vkCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("ССЫЛКА НА VK-ЗВОНОК")
-                .font(.caption2.weight(.bold))
-                .tracking(1.1)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                Image(systemName: "link")
-                    .foregroundStyle(.cyan)
-
-                TextField("https://vk.me/call/join/...", text: $vkCallLink)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .lineLimit(1)
-
-                if !vkCallLink.isEmpty {
-                    Button { vkCallLink = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
@@ -179,34 +180,6 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(.white.opacity(0.12), lineWidth: 1)
         }
-    }
-
-    private var controlsCard: some View {
-        VStack(spacing: 0) {
-            row(icon: "globe", title: "Сервер", value: viewModel.serverDisplayName)
-            Divider().overlay(.white.opacity(0.1))
-            row(icon: "point.3.connected.trianglepath.dotted", title: "Транспорт", value: viewModel.activeTransport.rawValue)
-        }
-        .padding(.horizontal, 16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
-        }
-    }
-
-    private func row(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: icon)
-                .foregroundStyle(.cyan)
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Text(value).font(.subheadline.weight(.semibold)).lineLimit(1)
-            }
-            Spacer()
-        }
-        .padding(.vertical, 15)
     }
 
     private var statusColor: Color {
