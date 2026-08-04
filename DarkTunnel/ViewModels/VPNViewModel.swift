@@ -11,12 +11,7 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = false
     @Published var reconnectAfterWake = true
     @Published var routeAPNsThroughVPN = false
-    @Published var connectivity = ConnectivitySnapshot(
-        hasNetworkPath: true,
-        vk: .unknown,
-        google: .unknown,
-        checkedAt: Date()
-    )
+    @Published var connectivity = ConnectivitySnapshot(hasNetworkPath: true, vk: .unknown, google: .unknown, checkedAt: Date())
     @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
@@ -36,22 +31,26 @@ final class VPNViewModel: ObservableObject {
 
     var activeTransport: TransportKind {
         switch preferredTransport {
-        case .automatic: return connectivity.recommendedTransport
-        case .amneziaWG: return .amneziaWG
-        case .wdtt: return .wdtt
+        case .automatic:
+            if connectivity.recommendedTransport == .wdtt {
+                return hasValidVKLink ? .vkTurn : .wdtt
+            }
+            return .amneziaWG
+        case .amneziaWG:
+            return .amneziaWG
+        case .vkTurn:
+            return hasValidVKLink ? .vkTurn : .wdtt
+        case .wdtt:
+            return .wdtt
         }
     }
 
     var statusDetail: String {
         switch state {
-        case .disconnected:
-            return connectionError ?? connectivity.summary
-        case .connecting:
-            return "Проверяем VK и Google, затем выбираем транспорт"
-        case .connected:
-            return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
-        case .reconnecting:
-            return "Переключаем сервер"
+        case .disconnected: return connectionError ?? connectivity.summary
+        case .connecting: return "Проверяем VK и внешний интернет, затем выбираем транспорт"
+        case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
+        case .reconnecting: return "Переключаем сервер"
         }
     }
 
@@ -65,9 +64,7 @@ final class VPNViewModel: ObservableObject {
     }
 
     func refreshConnectivity() {
-        Task {
-            connectivity = await ConnectivityDiagnostics.shared.run()
-        }
+        Task { connectivity = await ConnectivityDiagnostics.shared.run() }
     }
 
     func toggleConnection() {
@@ -90,19 +87,11 @@ final class VPNViewModel: ObservableObject {
             }
 
             do {
-                try await VPNController.shared.connect(
-                    transport: activeTransport,
-                    vkCallLink: vkCallLink
-                )
+                try await VPNController.shared.connect(transport: activeTransport, vkCallLink: vkCallLink)
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
-
                 if liveActivitiesEnabled {
-                    LiveActivityController.shared.start(
-                        server: selectedServer.city,
-                        latency: selectedServer.latencyMilliseconds,
-                        transport: activeTransport.rawValue
-                    )
+                    LiveActivityController.shared.start(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: activeTransport.rawValue)
                 }
             } catch {
                 connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
@@ -124,9 +113,7 @@ final class VPNViewModel: ObservableObject {
 
     func selectAutomaticServer() {
         usesAutomaticServer = true
-        if let fastest = servers.min(by: { $0.latencyMilliseconds < $1.latencyMilliseconds }) {
-            selectedServer = fastest
-        }
+        if let fastest = servers.min(by: { $0.latencyMilliseconds < $1.latencyMilliseconds }) { selectedServer = fastest }
         reconnectIfNeeded()
     }
 
@@ -144,11 +131,7 @@ final class VPNViewModel: ObservableObject {
             guard state == .reconnecting else { return }
             state = .connected
             if liveActivitiesEnabled {
-                LiveActivityController.shared.update(
-                    server: selectedServer.city,
-                    latency: selectedServer.latencyMilliseconds,
-                    transport: activeTransport.rawValue
-                )
+                LiveActivityController.shared.update(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: activeTransport.rawValue)
             }
         }
     }
