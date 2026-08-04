@@ -61,8 +61,10 @@ final class VPNController: ObservableObject {
             return "automatic"
         case .amneziaWG:
             return "amnezia"
-        case .wdtt:
+        case .vkTurn:
             return "vk-turn-wireguard"
+        case .wdtt:
+            return "wdtt-wireguard"
         }
     }
 }
