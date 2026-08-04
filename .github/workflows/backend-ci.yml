@@ -26,11 +26,24 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Compile Python
         run: python -m compileall -q backend/app
+      - name: Prepare CI environment
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-password
+          EOF
+          cat > backend/.env <<'EOF'
+          ENVIRONMENT=test
+          PUBLIC_API_URL=https://api.example.test
+          POSTGRES_PASSWORD=ci-password
+          DATABASE_URL=postgresql+asyncpg://darktunnel:ci-password@db:5432/darktunnel
+          REDIS_URL=redis://redis:6379/0
+          TELEGRAM_BOT_TOKEN=123456:CI_TOKEN
+          TELEGRAM_OWNER_ID=1
+          ACTIVATION_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          WDTT_PUBLIC_HOST=127.0.0.1
+          WDTT_PUBLIC_PORT=56000
+          EOF
       - name: Validate Docker Compose
-        env:
-          POSTGRES_PASSWORD: ci-password
-        run: docker compose --env-file <(printf 'POSTGRES_PASSWORD=ci-password\n') -f docker-compose.backend.yml config >/dev/null
+        run: docker compose --env-file .env -f docker-compose.backend.yml config >/dev/null
       - name: Build containers
-        env:
-          POSTGRES_PASSWORD: ci-password
-        run: docker compose --env-file <(printf 'POSTGRES_PASSWORD=ci-password\n') -f docker-compose.backend.yml build
+        run: docker compose --env-file .env -f docker-compose.backend.yml build
