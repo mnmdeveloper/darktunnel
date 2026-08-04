@@ -20,7 +20,7 @@ final class VPNController: ObservableObject {
         }
     }
 
-    func prepare() async throws {
+    func prepare(transport: TransportKind, vkCallLink: String) async throws {
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
         let manager = managers.first ?? NETunnelProviderManager()
 
@@ -28,9 +28,11 @@ final class VPNController: ObservableObject {
         proto.providerBundleIdentifier = "app.lavender3512.currant6944.PacketTunnel"
         proto.serverAddress = "31.77.148.80"
         proto.providerConfiguration = [
-            "mode": "automatic",
+            "mode": modeIdentifier(for: transport),
+            "amneziaHost": "31.77.148.80",
             "wdttHost": "31.77.148.80",
             "wdttPort": 56000,
+            "vkCallLink": vkCallLink,
             "mtu": 1280
         ]
 
@@ -44,12 +46,23 @@ final class VPNController: ObservableObject {
         self.status = manager.connection.status
     }
 
-    func connect() async throws {
-        if manager == nil { try await prepare() }
+    func connect(transport: TransportKind, vkCallLink: String) async throws {
+        try await prepare(transport: transport, vkCallLink: vkCallLink)
         try manager?.connection.startVPNTunnel()
     }
 
     func disconnect() {
         manager?.connection.stopVPNTunnel()
+    }
+
+    private func modeIdentifier(for transport: TransportKind) -> String {
+        switch transport {
+        case .automatic:
+            return "automatic"
+        case .amneziaWG:
+            return "amnezia"
+        case .wdtt:
+            return "vk-turn-wireguard"
+        }
     }
 }
