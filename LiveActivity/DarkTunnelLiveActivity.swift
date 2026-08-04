@@ -11,6 +11,7 @@ struct DarkTunnelLiveActivityBundle: WidgetBundle {
 
 struct DarkTunnelLiveActivity: Widget {
     private let blueGray = Color(red: 0.37, green: 0.47, blue: 0.58)
+    private let disconnectURL = URL(string: "darktunnel://disconnect")!
 
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: DarkTunnelActivityAttributes.self) { context in
@@ -24,9 +25,8 @@ struct DarkTunnelLiveActivity: Widget {
                     .frame(width: 42, height: 42)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(context.state.status)
-                            .font(.headline)
-                        Text("DarkTunnel защищает соединение")
+                        Text(context.state.status).font(.headline)
+                        Text("\(context.state.server) · \(context.state.transport)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -40,13 +40,13 @@ struct DarkTunnelLiveActivity: Widget {
                         .background(blueGray.opacity(0.16), in: Capsule())
                 }
 
-                HStack {
-                    Label(context.state.server, systemImage: "globe")
-                    Spacer()
-                    Label(context.state.transport, systemImage: "point.3.connected.trianglepath.dotted")
+                Link(destination: disconnectURL) {
+                    Label("Отключить VPN", systemImage: "power")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             .padding()
             .activityBackgroundTint(Color(red: 0.05, green: 0.06, blue: 0.08))
@@ -54,19 +54,15 @@ struct DarkTunnelLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    ZStack {
-                        Circle().fill(blueGray.opacity(0.18))
-                        Image(systemName: "shield.fill")
-                            .foregroundStyle(blueGray)
-                    }
-                    .frame(width: 38, height: 38)
+                    Image(systemName: "shield.fill")
+                        .foregroundStyle(blueGray)
+                        .font(.title3)
                 }
 
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 2) {
-                        Text(context.state.status)
-                            .font(.headline)
-                        Text(context.state.server)
+                        Text(context.state.server).font(.headline)
+                        Text(context.state.transport)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -76,31 +72,26 @@ struct DarkTunnelLiveActivity: Widget {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("\(context.state.latency)")
                             .font(.headline.monospacedDigit())
-                        Text("мс")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        Text("мс").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        Label(context.state.transport, systemImage: "point.3.connected.trianglepath.dotted")
-                            .lineLimit(1)
-                        Spacer()
-                        Label("Защищено", systemImage: "lock.fill")
+                    Link(destination: disconnectURL) {
+                        Label("Отключить", systemImage: "power")
+                            .font(.caption.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
                 }
             } compactLeading: {
-                Image(systemName: "shield.fill")
-                    .foregroundStyle(blueGray)
+                Image(systemName: "shield.fill").foregroundStyle(blueGray)
             } compactTrailing: {
                 Text("\(context.state.latency)")
                     .font(.caption2.monospacedDigit().weight(.semibold))
             } minimal: {
-                Image(systemName: "shield.fill")
-                    .foregroundStyle(blueGray)
+                Image(systemName: "shield.fill").foregroundStyle(blueGray)
             }
             .keylineTint(blueGray)
         }
