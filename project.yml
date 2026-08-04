@@ -6,20 +6,23 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 2
-    MARKETING_VERSION: 0.2.0
+    CURRENT_PROJECT_VERSION: 4
+    MARKETING_VERSION: 0.3.0
 targets:
   DarkTunnel:
     type: application
     platform: iOS
     sources:
       - path: DarkTunnel
+      - path: Shared
     info:
       path: DarkTunnel/Info.plist
     entitlements:
       path: DarkTunnel/DarkTunnel.entitlements
     dependencies:
       - target: PacketTunnel
+        embed: true
+      - target: DarkTunnelLiveActivity
         embed: true
     settings:
       base:
@@ -47,6 +50,22 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.PacketTunnel
         PRODUCT_NAME: PacketTunnel
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+  DarkTunnelLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LiveActivity
+      - path: Shared
+    info:
+      path: LiveActivity/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.LiveActivity
+        PRODUCT_NAME: DarkTunnelLiveActivity
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
         APPLICATION_EXTENSION_API_ONLY: YES
