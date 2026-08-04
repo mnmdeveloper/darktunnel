@@ -20,17 +20,17 @@ final class NetworkPolicy: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if update.status != .satisfied {
-                    path = .unavailable
-                    recommendedTransport = .automatic
+                    self.path = .unavailable
+                    self.recommendedTransport = .automatic
                 } else if update.usesInterfaceType(.wifi) {
-                    path = .wifi
-                    recommendedTransport = .amneziaWG
+                    self.path = .wifi
+                    self.recommendedTransport = .amneziaWG
                 } else if update.usesInterfaceType(.cellular) {
-                    path = .cellular
-                    recommendedTransport = .automatic
+                    self.path = .cellular
+                    self.recommendedTransport = .automatic
                 } else {
-                    path = .wifi
-                    recommendedTransport = .automatic
+                    self.path = .wifi
+                    self.recommendedTransport = .automatic
                 }
             }
         }
