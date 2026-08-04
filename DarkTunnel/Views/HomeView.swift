@@ -9,59 +9,41 @@ struct HomeView: View {
 
     private static let moscowRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173),
-        span: MKCoordinateSpan(latitudeDelta: 0.25, longitudeDelta: 0.25)
+        span: MKCoordinateSpan(latitudeDelta: 0.34, longitudeDelta: 0.34)
     )
 
     var body: some View {
         ZStack {
-            Map(position: $camera, interactionModes: []) {
-                if viewModel.state == .connected {
-                    Marker(viewModel.selectedServer.city, coordinate: viewModel.selectedServer.coordinate)
-                        .tint(.cyan)
-                }
-            }
-            .mapStyle(.standard(elevation: .realistic, emphasis: .muted))
-            .ignoresSafeArea()
-            .overlay {
-                LinearGradient(
-                    colors: [
-                        .black.opacity(0.22),
-                        .black.opacity(0.15),
-                        .black.opacity(0.58),
-                        .black.opacity(0.9)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+            Map(position: $camera, interactionModes: [])
+                .mapStyle(.standard(elevation: .flat, emphasis: .muted))
                 .ignoresSafeArea()
-            }
-
-            VStack(spacing: 14) {
-                topBar
-
-                if viewModel.showsAnnouncement {
-                    AnnouncementBanner(
-                        title: "DarkTunnel запускается",
-                        message: "Первый интерфейс уже готов. Подключение пока работает в демонстрационном режиме.",
-                        onClose: viewModel.dismissAnnouncement
+                .overlay {
+                    LinearGradient(
+                        colors: [.black.opacity(0.15), .black.opacity(0.42), .black.opacity(0.9)],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .ignoresSafeArea()
                 }
 
-                Spacer()
-
-                connectionCard
-                quickControls
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    header
+                    Spacer(minLength: 120)
+                    statusCard
+                    controlsCard
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 26)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 12)
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView()
-                .environmentObject(viewModel)
+            SettingsView().environmentObject(viewModel)
+                .presentationDetents([.large])
+                .presentationBackground(.ultraThinMaterial)
         }
-        .confirmationDialog("Сервер", isPresented: $showingServers, titleVisibility: .visible) {
+        .confirmationDialog("Выберите сервер", isPresented: $showingServers) {
             ForEach(viewModel.servers) { server in
                 Button("\(server.flag) \(server.name) · \(server.latencyMilliseconds) мс") {
                     viewModel.select(server)
@@ -73,173 +55,144 @@ struct HomeView: View {
         .onChange(of: viewModel.selectedServer) { _, _ in moveCamera() }
     }
 
-    private var topBar: some View {
-        GlassCard(cornerRadius: 22) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(.cyan.opacity(0.15))
-                        .frame(width: 42, height: 42)
-                    Image(systemName: "shield.lefthalf.filled")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.cyan)
-                }
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.cyan)
+                .frame(width: 44, height: 44)
+                .background(.thinMaterial, in: Circle())
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("DarkTunnel")
-                        .font(.headline)
-                    Text(viewModel.networkName)
-                        .font(.caption)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("DarkTunnel")
+                    .font(.title3.weight(.bold))
+                Text(viewModel.networkName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button { showingSettings = true } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .background(.thinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(.white.opacity(0.14), lineWidth: 1)
+        }
+    }
+
+    private var statusCard: some View {
+        VStack(spacing: 18) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(viewModel.state.title.uppercased())
+                        .font(.caption.weight(.bold))
+                        .tracking(1.5)
+                        .foregroundStyle(statusColor)
+
+                    Text(viewModel.state == .connected ? viewModel.selectedServer.city : "Москва")
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+
+                    Text(viewModel.statusDetail)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Button {
-                    showingSettings = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 40, height: 40)
-                        .background(.white.opacity(0.08), in: Circle())
+                ZStack {
+                    Circle().fill(.thinMaterial)
+                    Circle()
+                        .stroke(statusColor.opacity(0.8), lineWidth: 7)
+                        .padding(6)
+                    Image(systemName: viewModel.state == .connected ? "lock.fill" : "lock.open.fill")
+                        .font(.title2.weight(.bold))
                 }
-                .buttonStyle(.plain)
+                .frame(width: 82, height: 82)
             }
-        }
-    }
 
-    private var connectionCard: some View {
-        GlassCard {
-            VStack(spacing: 18) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(viewModel.state.title.uppercased())
-                            .font(.caption.weight(.bold))
-                            .tracking(1.2)
-                            .foregroundStyle(statusColor)
-
-                        Text(viewModel.state == .connected ? viewModel.selectedServer.city : "Москва")
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-
-                        Text(viewModel.statusDetail)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+            Button(action: viewModel.toggleConnection) {
+                HStack(spacing: 10) {
+                    if viewModel.state == .connecting || viewModel.state == .reconnecting {
+                        ProgressView().tint(.black)
+                    } else {
+                        Image(systemName: viewModel.state == .connected ? "power" : "bolt.shield.fill")
                     }
-
-                    Spacer()
-
-                    ZStack {
-                        Circle()
-                            .stroke(.white.opacity(0.1), lineWidth: 8)
-                        Circle()
-                            .trim(from: 0, to: viewModel.state == .connected ? 1 : 0.22)
-                            .stroke(statusColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .animation(.easeInOut(duration: 0.55), value: viewModel.state)
-                        Image(systemName: viewModel.state == .connected ? "lock.fill" : "lock.open.fill")
-                            .font(.title3.weight(.bold))
-                    }
-                    .frame(width: 70, height: 70)
+                    Text(viewModel.state.buttonTitle)
                 }
-
-                Button(action: viewModel.toggleConnection) {
-                    HStack(spacing: 10) {
-                        if viewModel.state == .connecting || viewModel.state == .reconnecting {
-                            ProgressView()
-                                .tint(.black)
-                        } else {
-                            Image(systemName: viewModel.state == .connected ? "power" : "bolt.shield.fill")
-                        }
-                        Text(viewModel.state.buttonTitle)
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 15)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private var quickControls: some View {
-        GlassCard(cornerRadius: 24) {
-            VStack(spacing: 12) {
-                Button {
-                    showingServers = true
-                } label: {
-                    controlRow(
-                        icon: "globe.europe.africa.fill",
-                        title: "Сервер",
-                        value: "\(viewModel.selectedServer.flag) \(viewModel.selectedServer.name)"
-                    )
-                }
-
-                Divider().overlay(.white.opacity(0.12))
-
-                controlRow(
-                    icon: "point.3.connected.trianglepath.dotted",
-                    title: "Транспорт",
-                    value: viewModel.activeTransport.rawValue
-                )
-
-                Divider().overlay(.white.opacity(0.12))
-
-                controlRow(
-                    icon: "speedometer",
-                    title: "Скорость",
-                    value: "\(viewModel.speedMode.rawValue) соединения"
-                )
+                .font(.headline)
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 17)
+                .background(.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             .buttonStyle(.plain)
         }
+        .padding(22)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .stroke(.white.opacity(0.14), lineWidth: 1)
+        }
     }
 
-    private func controlRow(icon: String, title: String, value: String) -> some View {
-        HStack(spacing: 12) {
+    private var controlsCard: some View {
+        VStack(spacing: 0) {
+            Button { showingServers = true } label: {
+                row(icon: "globe", title: "Сервер", value: "\(viewModel.selectedServer.flag) \(viewModel.selectedServer.name)", chevron: true)
+            }
+            Divider().overlay(.white.opacity(0.1))
+            row(icon: "point.3.connected.trianglepath.dotted", title: "Транспорт", value: viewModel.activeTransport.rawValue)
+            Divider().overlay(.white.opacity(0.1))
+            row(icon: "link", title: "VK-звонок", value: viewModel.vkCallLink.isEmpty ? "Не указан" : "Ссылка сохранена")
+        }
+        .padding(.horizontal, 16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(.white.opacity(0.12), lineWidth: 1)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func row(icon: String, title: String, value: String, chevron: Bool = false) -> some View {
+        HStack(spacing: 13) {
             Image(systemName: icon)
                 .foregroundStyle(.cyan)
-                .frame(width: 26)
+                .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(value).font(.subheadline.weight(.semibold)).lineLimit(1)
             }
             Spacer()
-            if title == "Сервер" {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
+            if chevron { Image(systemName: "chevron.up.chevron.down").font(.caption.bold()).foregroundStyle(.secondary) }
         }
+        .padding(.vertical, 15)
         .contentShape(Rectangle())
     }
 
     private var statusColor: Color {
         switch viewModel.state {
-        case .connected: .mint
-        case .connecting, .reconnecting: .yellow
-        case .disconnected: .secondary
+        case .connected: return .mint
+        case .connecting, .reconnecting: return .yellow
+        case .disconnected: return .secondary
         }
     }
 
     private func moveCamera() {
-        let region: MKCoordinateRegion
-        if viewModel.state == .connected {
-            region = MKCoordinateRegion(
-                center: viewModel.selectedServer.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.28, longitudeDelta: 0.28)
-            )
-        } else {
-            region = Self.moscowRegion
-        }
-
-        withAnimation(.smooth(duration: 1.15)) {
-            camera = .region(region)
+        let center = viewModel.state == .connected ? viewModel.selectedServer.coordinate : Self.moscowRegion.center
+        withAnimation(.smooth(duration: 1.0)) {
+            camera = .region(MKCoordinateRegion(center: center, span: MKCoordinateSpan(latitudeDelta: 0.34, longitudeDelta: 0.34)))
         }
     }
 }
