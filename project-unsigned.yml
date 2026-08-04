@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 7
-    MARKETING_VERSION: 0.3.3
+    CURRENT_PROJECT_VERSION: 8
+    MARKETING_VERSION: 0.3.4
 targets:
   DarkTunnel:
     type: application
@@ -17,6 +17,13 @@ targets:
       - path: Shared
     info:
       path: DarkTunnel/Info.plist
+      properties:
+        UIRequiresFullScreen: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
     entitlements:
       path: DarkTunnel/DarkTunnel.entitlements
     dependencies:
@@ -28,6 +35,10 @@ targets:
         PRODUCT_NAME: DarkTunnel
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
     scheme:
       testTargets: []
 
