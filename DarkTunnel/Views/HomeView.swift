@@ -3,9 +3,9 @@ import MapKit
 
 struct HomeView: View {
     @EnvironmentObject private var viewModel: VPNViewModel
+    @AppStorage("vkCallLink") private var vkCallLink = ""
     @State private var camera: MapCameraPosition = .region(Self.moscowRegion)
     @State private var showingSettings = false
-    @State private var showingServers = false
 
     private static let moscowRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173),
@@ -17,38 +17,36 @@ struct HomeView: View {
             Map(position: $camera, interactionModes: [])
                 .mapStyle(.standard(elevation: .flat, emphasis: .muted))
                 .ignoresSafeArea()
-                .overlay {
-                    LinearGradient(
-                        colors: [.black.opacity(0.15), .black.opacity(0.42), .black.opacity(0.9)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea()
-                }
+
+            LinearGradient(
+                colors: [.black.opacity(0.10), .black.opacity(0.34), .black.opacity(0.88)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 14) {
                     header
-                    Spacer(minLength: 120)
+                    Spacer(minLength: 150)
                     statusCard
+                    vkCard
                     controlsCard
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 26)
+                .padding(.bottom, 34)
+                .frame(maxWidth: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.black)
+        .ignoresSafeArea(edges: .bottom)
         .sheet(isPresented: $showingSettings) {
-            SettingsView().environmentObject(viewModel)
+            SettingsView()
+                .environmentObject(viewModel)
                 .presentationDetents([.large])
                 .presentationBackground(.ultraThinMaterial)
-        }
-        .confirmationDialog("Выберите сервер", isPresented: $showingServers) {
-            ForEach(viewModel.servers) { server in
-                Button("\(server.flag) \(server.name) · \(server.latencyMilliseconds) мс") {
-                    viewModel.select(server)
-                }
-            }
         }
         .onAppear(perform: moveCamera)
         .onChange(of: viewModel.state) { _, _ in moveCamera() }
@@ -146,15 +144,50 @@ struct HomeView: View {
         }
     }
 
+    private var vkCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("ССЫЛКА НА VK-ЗВОНОК")
+                .font(.caption2.weight(.bold))
+                .tracking(1.1)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Image(systemName: "link")
+                    .foregroundStyle(.cyan)
+
+                TextField("https://vk.me/call/join/...", text: $vkCallLink)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .lineLimit(1)
+
+                if !vkCallLink.isEmpty {
+                    Button {
+                        vkCallLink = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(.white.opacity(0.12), lineWidth: 1)
+        }
+    }
+
     private var controlsCard: some View {
         VStack(spacing: 0) {
-            Button { showingServers = true } label: {
-                row(icon: "globe", title: "Сервер", value: "\(viewModel.selectedServer.flag) \(viewModel.selectedServer.name)", chevron: true)
-            }
+            row(icon: "globe", title: "Сервер", value: "\(viewModel.selectedServer.flag) \(viewModel.selectedServer.name) · в настройках")
             Divider().overlay(.white.opacity(0.1))
             row(icon: "point.3.connected.trianglepath.dotted", title: "Транспорт", value: viewModel.activeTransport.rawValue)
-            Divider().overlay(.white.opacity(0.1))
-            row(icon: "link", title: "VK-звонок", value: viewModel.vkCallLink.isEmpty ? "Не указан" : "Ссылка сохранена")
         }
         .padding(.horizontal, 16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
@@ -162,10 +195,9 @@ struct HomeView: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(.white.opacity(0.12), lineWidth: 1)
         }
-        .buttonStyle(.plain)
     }
 
-    private func row(icon: String, title: String, value: String, chevron: Bool = false) -> some View {
+    private func row(icon: String, title: String, value: String) -> some View {
         HStack(spacing: 13) {
             Image(systemName: icon)
                 .foregroundStyle(.cyan)
@@ -175,10 +207,8 @@ struct HomeView: View {
                 Text(value).font(.subheadline.weight(.semibold)).lineLimit(1)
             }
             Spacer()
-            if chevron { Image(systemName: "chevron.up.chevron.down").font(.caption.bold()).foregroundStyle(.secondary) }
         }
         .padding(.vertical, 15)
-        .contentShape(Rectangle())
     }
 
     private var statusColor: Color {
