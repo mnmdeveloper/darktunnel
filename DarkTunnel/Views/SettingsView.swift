@@ -12,16 +12,15 @@ struct SettingsView: View {
                 Color.black.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 22) {
+                    VStack(spacing: 18) {
                         speedSection
                         serverSection
                         transportSection
                         subscriptionSection
-                        behaviorSection
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 14)
-                    .padding(.bottom, 34)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 28)
                 }
             }
             .navigationTitle("Настройки")
@@ -32,7 +31,7 @@ struct SettingsView: View {
                         Image(systemName: "xmark")
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 38, height: 38)
+                            .frame(width: 36, height: 36)
                             .background(.thinMaterial, in: Circle())
                     }
                     .buttonStyle(.plain)
@@ -42,52 +41,101 @@ struct SettingsView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showingSubscriptionEditor) {
             subscriptionEditor
-                .presentationDetents([.height(260)])
+                .presentationDetents([.height(250)])
                 .presentationBackground(.ultraThinMaterial)
         }
     }
 
     private var speedSection: some View {
-        settingsSection("СКОРОСТЬ") {
-            ForEach(SpeedMode.allCases) { mode in
-                optionRow(
-                    icon: mode == .balanced ? "speedometer" : "bolt.fill",
-                    title: mode == .balanced ? "Сбалансированная" : "Максимальная",
-                    subtitle: mode == .balanced ? "3 соединения — быстрое подключение" : "10 соединений — максимальная скорость",
-                    selected: viewModel.speedMode == mode
-                ) {
-                    viewModel.speedMode = mode
-                }
-            }
+        compactSection("СКОРОСТЬ") {
+            compactOption(
+                icon: "speedometer",
+                title: "Сбалансированная",
+                subtitle: "3 соединения",
+                selected: viewModel.speedMode == .balanced
+            ) { viewModel.speedMode = .balanced }
+
+            compactOption(
+                icon: "bolt.fill",
+                title: "Максимальная",
+                subtitle: "10 соединений",
+                selected: viewModel.speedMode == .maximum
+            ) { viewModel.speedMode = .maximum }
         }
     }
 
     private var serverSection: some View {
-        settingsSection("СЕРВЕР", trailing: "обновлено только что") {
-            optionRow(
-                icon: "wand.and.stars",
-                title: "Автовыбор",
-                subtitle: "Сервер с наименьшей задержкой",
-                selected: viewModel.selectedServer.id == viewModel.servers.min(by: { $0.latencyMilliseconds < $1.latencyMilliseconds })?.id
-            ) {
-                if let fastest = viewModel.servers.min(by: { $0.latencyMilliseconds < $1.latencyMilliseconds }) {
-                    viewModel.select(fastest)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("СЕРВЕР")
+                    .font(.caption.weight(.bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("обновлено сейчас")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 5)
+
+            compactCard {
+                compactOption(
+                    icon: "wand.and.stars",
+                    title: "Автовыбор",
+                    subtitle: "Минимальная задержка",
+                    selected: viewModel.usesAutomaticServer
+                ) {
+                    viewModel.selectAutomaticServer()
                 }
             }
 
-            ForEach(viewModel.servers) { server in
-                serverRow(server)
+            VStack(spacing: 7) {
+                ForEach(viewModel.servers) { server in
+                    Button {
+                        viewModel.select(server)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(server.flag)
+                                .font(.title3)
+                                .frame(width: 28)
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(server.country)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text(server.city)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 6)
+                            latencyBadge(server.latencyMilliseconds)
+
+                            Image(systemName: !viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(!viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id ? .white : .secondary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(.white.opacity(0.08), lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
 
     private var transportSection: some View {
-        settingsSection("ТРАНСПОРТ") {
+        compactSection("ТРАНСПОРТ") {
             ForEach(TransportKind.allCases) { transport in
-                optionRow(
+                compactOption(
                     icon: "point.3.connected.trianglepath.dotted",
                     title: transport.rawValue,
-                    subtitle: transport == .automatic ? "Автовыбор по текущей сети" : "Использовать этот канал",
+                    subtitle: transport == .automatic ? "По текущей сети" : "Использовать канал",
                     selected: viewModel.preferredTransport == transport
                 ) {
                     viewModel.preferredTransport = transport
@@ -97,141 +145,65 @@ struct SettingsView: View {
     }
 
     private var subscriptionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("ПОДПИСКА")
                 .font(.caption.weight(.bold))
                 .tracking(1.2)
                 .foregroundStyle(.secondary)
-                .padding(.leading, 6)
+                .padding(.leading, 5)
 
             Button {
                 showingSubscriptionEditor = true
             } label: {
-                HStack(spacing: 13) {
+                HStack(spacing: 12) {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.title3)
-                        .frame(width: 30)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Сменить ссылку активации")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text(subscriptionLink.isEmpty ? "Ссылка не указана" : "Ссылка сохранена")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
+                        .frame(width: 28)
+                    Text("Сменить ссылку активации")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.tertiary)
                 }
-                .padding(16)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(.white.opacity(0.10), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(.white.opacity(0.08), lineWidth: 1)
                 }
             }
             .buttonStyle(.plain)
         }
     }
 
-    private var behaviorSection: some View {
-        settingsSection("ПОВЕДЕНИЕ") {
-            Toggle("Отключать при блокировке", isOn: $viewModel.disconnectOnSleep)
-                .padding(.vertical, 11)
-            Divider().overlay(.white.opacity(0.08))
-            Toggle("Подключаться после пробуждения", isOn: $viewModel.reconnectAfterWake)
-                .padding(.vertical, 11)
-            Divider().overlay(.white.opacity(0.08))
-            Toggle("Направлять APNs через VPN", isOn: $viewModel.routeAPNsThroughVPN)
-                .padding(.vertical, 11)
+    private func compactSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.bold))
+                .tracking(1.2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 5)
+
+            compactCard(content: content)
         }
     }
 
-    private func serverRow(_ server: VPNServer) -> some View {
-        Button {
-            viewModel.select(server)
-        } label: {
-            HStack(spacing: 13) {
-                Text(server.flag)
-                    .font(.title3)
-                    .frame(width: 30)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(server.country)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(server.city)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 8)
-
-                latencyBadge(server.latencyMilliseconds)
-
-                Image(systemName: viewModel.selectedServer.id == server.id ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(viewModel.selectedServer.id == server.id ? .white : .secondary)
-            }
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
+    private func compactCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            content()
         }
-        .buttonStyle(.plain)
-    }
-
-    private func latencyBadge(_ value: Int) -> some View {
-        let tint: Color = value < 70 ? .green : (value < 130 ? .yellow : .orange)
-
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 7, height: 7)
-            Text("\(value) мс")
-                .font(.caption.monospacedDigit().weight(.semibold))
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(tint.opacity(0.14), in: Capsule())
-    }
-
-    private func settingsSection<Content: View>(
-        _ title: String,
-        trailing: String? = nil,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(title)
-                    .font(.caption.weight(.bold))
-                    .tracking(1.2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let trailing {
-                    Text(trailing)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 6)
-
-            VStack(spacing: 0) {
-                content()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .stroke(.white.opacity(0.10), lineWidth: 1)
-            }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 3)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
         }
     }
 
-    private func optionRow(
+    private func compactOption(
         icon: String,
         title: String,
         subtitle: String,
@@ -239,37 +211,48 @@ struct SettingsView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 13) {
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title3)
-                    .frame(width: 30)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 28)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
                 }
 
-                Spacer(minLength: 10)
+                Spacer(minLength: 8)
 
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundStyle(selected ? .white : .secondary)
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
+    private func latencyBadge(_ value: Int) -> some View {
+        let tint: Color = value < 70 ? .green : (value < 130 ? .yellow : .orange)
+        return HStack(spacing: 4) {
+            Circle().fill(tint).frame(width: 6, height: 6)
+            Text("\(value) мс")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(tint.opacity(0.14), in: Capsule())
+    }
+
     private var subscriptionEditor: some View {
         NavigationStack {
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: "link")
                         .foregroundStyle(.cyan)
@@ -284,7 +267,6 @@ struct SettingsView: View {
                 Text("Ссылка хранится только на этом iPhone.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
                 Spacer()
             }
             .padding(18)
