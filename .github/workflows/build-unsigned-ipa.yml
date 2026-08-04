@@ -10,13 +10,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Checkout VK TURN engine
+        uses: actions/checkout@v4
+        with:
+          repository: anton48/vk-turn-proxy-ios
+          ref: main
+          path: Vendor/vk-turn-proxy-ios
+
+      - name: Install build tools
+        run: |
+          brew install xcodegen
+          go version
+
+      - name: Build WireGuard TURN bridge
+        working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
+        run: |
+          set -euo pipefail
+          make clean
+          make xcframework
+          test -d build/WireGuardTURN.xcframework
+          find build/WireGuardTURN.xcframework -maxdepth 3 -type f -print
 
       - name: Generate full unsigned project
         run: xcodegen generate --spec project-unsigned.yml
 
-      - name: Build app and PacketTunnel without signing
+      - name: Build app, PacketTunnel and Live Activity without signing
         run: |
           set +e
           xcodebuild build \
@@ -35,7 +53,7 @@ jobs:
           if [ "$STATUS" -ne 0 ]; then
             echo
             echo '================ ACTUAL XCODE ERRORS ================'
-            grep -nE '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -120 || true
+            grep -nE '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -160 || true
             echo '====================================================='
             exit "$STATUS"
           fi
@@ -46,6 +64,7 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
           test -d "$APP_PATH"
           test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
+          test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
 
           mkdir -p "$RUNNER_TEMP/package/Payload"
           cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/"
@@ -57,7 +76,7 @@ jobs:
 
       - name: Inspect package
         run: |
-          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/' | head -80
+          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/|DarkTunnelLiveActivity.appex/' | head -120
 
       - uses: actions/upload-artifact@v4
         with:
