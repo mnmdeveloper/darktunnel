@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 10
-    MARKETING_VERSION: 0.4.1
+    CURRENT_PROJECT_VERSION: 11
+    MARKETING_VERSION: 0.5.0
 targets:
   DarkTunnel:
     type: application
@@ -63,12 +63,25 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
     entitlements:
       path: PacketTunnel/PacketTunnel.entitlements
+    dependencies:
+      - framework: Vendor/vk-turn-proxy-ios/WireGuardBridge/build/WireGuardTURN.xcframework
+        embed: false
+      - sdk: NetworkExtension.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.PacketTunnel
         PRODUCT_NAME: PacketTunnel
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
+        SWIFT_OBJC_BRIDGING_HEADER: PacketTunnel/BridgeHeader.h
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/include"
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/build"
+        OTHER_LDFLAGS:
+          - "-lresolv"
 
   DarkTunnelLiveActivity:
     type: app-extension
