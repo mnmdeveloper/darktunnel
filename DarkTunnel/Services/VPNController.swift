@@ -38,7 +38,12 @@ final class VPNController: ObservableObject {
         ]
 
         if transport == .vkTurn {
-            let password = UserDefaults.standard.string(forKey: "vkTurnServerPassword") ?? ""
+            let password = (UserDefaults.standard.string(forKey: "vkTurnServerPassword") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !password.isEmpty else {
+                throw VPNControllerError.missingServerPassword
+            }
+
             let connections = UserDefaults.standard.integer(forKey: "vkTurnConnections")
             let runtime = VKTurnRuntimeConfig(
                 callLink: vkCallLink,
@@ -130,6 +135,7 @@ final class VPNController: ObservableObject {
 
 private enum VPNControllerError: LocalizedError {
     case managerUnavailable
+    case missingServerPassword
     case invalidVKConfiguration
     case tunnelStoppedBeforeReady
     case connectionTimeout
@@ -139,10 +145,12 @@ private enum VPNControllerError: LocalizedError {
         switch self {
         case .managerUnavailable:
             return "Системный VPN-профиль недоступен"
+        case .missingServerPassword:
+            return "Введите главный пароль туннеля WDTT"
         case .invalidVKConfiguration:
             return "Не удалось сформировать настройки VK TURN"
         case .tunnelStoppedBeforeReady:
-            return "VPN-движок остановился до готовности туннеля"
+            return "VK TURN или WDTT отклонил подключение. Проверьте ссылку звонка и главный пароль"
         case .connectionTimeout:
             return "Туннель не подключился за отведённое время"
         case .amneziaNotReady:
