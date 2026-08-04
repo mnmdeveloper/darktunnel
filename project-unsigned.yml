@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 8
-    MARKETING_VERSION: 0.3.4
+    CURRENT_PROJECT_VERSION: 9
+    MARKETING_VERSION: 0.4.0
 targets:
   DarkTunnel:
     type: application
@@ -20,6 +20,7 @@ targets:
       properties:
         UIRequiresFullScreen: true
         UILaunchScreen: {}
+        NSSupportsLiveActivities: true
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
@@ -28,6 +29,8 @@ targets:
       path: DarkTunnel/DarkTunnel.entitlements
     dependencies:
       - target: PacketTunnel
+        embed: true
+      - target: DarkTunnelLiveActivity
         embed: true
     settings:
       base:
@@ -62,3 +65,23 @@ targets:
         PRODUCT_NAME: PacketTunnel
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
+
+  DarkTunnelLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LiveActivity
+      - path: Shared
+    info:
+      path: LiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: DarkTunnel Live Activity
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.LiveActivity
+        PRODUCT_NAME: DarkTunnelLiveActivity
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: "1"
