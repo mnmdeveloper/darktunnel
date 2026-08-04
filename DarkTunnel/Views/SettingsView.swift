@@ -10,13 +10,13 @@ struct SettingsView: View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 18) {
                         speedSection
                         serverSection
                         transportSection
                         behaviorSection
+                        diagnosticsSection
                         subscriptionSection
                     }
                     .padding(.horizontal, 16)
@@ -29,60 +29,38 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 36, height: 36)
-                            .background(.thinMaterial, in: Circle())
-                    }
-                    .buttonStyle(.plain)
+                        Image(systemName: "xmark").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
+                            .frame(width: 36, height: 36).background(.thinMaterial, in: Circle())
+                    }.buttonStyle(.plain)
                 }
             }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showingSubscriptionEditor) {
-            subscriptionEditor
-                .presentationDetents([.height(250)])
-                .presentationBackground(.ultraThinMaterial)
+            subscriptionEditor.presentationDetents([.height(250)]).presentationBackground(.ultraThinMaterial)
         }
     }
 
     private var speedSection: some View {
         compactSection("СКОРОСТЬ") {
-            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения — быстрее запускается и расходует меньше батареи", selected: viewModel.speedMode == .balanced) {
-                viewModel.speedMode = .balanced
-            }
-            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений — выше скорость при хорошем канале", selected: viewModel.speedMode == .maximum) {
-                viewModel.speedMode = .maximum
-            }
+            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения — быстрее запускается и расходует меньше батареи", selected: viewModel.speedMode == .balanced) { viewModel.speedMode = .balanced }
+            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений — выше скорость при хорошем канале", selected: viewModel.speedMode == .maximum) { viewModel.speedMode = .maximum }
         }
     }
 
     private var serverSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("СЕРВЕР")
-                    .font(.caption.weight(.bold))
-                    .tracking(1.2)
-                    .foregroundStyle(.secondary)
+                Text("СЕРВЕР").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary)
                 Spacer()
-                Text("обновлено сейчас")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 5)
-
+                Text("обновлено сейчас").font(.caption2).foregroundStyle(.tertiary)
+            }.padding(.horizontal, 5)
             compactCard {
-                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Приложение использует сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) {
-                    viewModel.selectAutomaticServer()
-                }
+                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Приложение использует сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) { viewModel.selectAutomaticServer() }
             }
-
             VStack(spacing: 7) {
                 ForEach(viewModel.servers) { server in
-                    Button {
-                        viewModel.select(server)
-                    } label: {
+                    Button { viewModel.select(server) } label: {
                         HStack(spacing: 12) {
                             Text(server.flag).font(.title3).frame(width: 28)
                             VStack(alignment: .leading, spacing: 1) {
@@ -92,19 +70,12 @@ struct SettingsView: View {
                             Spacer(minLength: 6)
                             latencyBadge(server.latencyMilliseconds)
                             let selected = !viewModel.usesAutomaticServer && viewModel.selectedServer.id == server.id
-                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(selected ? .white : .secondary)
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.title3).foregroundStyle(selected ? .white : .secondary)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
+                        .padding(.horizontal, 14).padding(.vertical, 11)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(.white.opacity(0.08), lineWidth: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                        .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1) }
+                    }.buttonStyle(.plain)
                 }
             }
         }
@@ -113,12 +84,7 @@ struct SettingsView: View {
     private var transportSection: some View {
         compactSection("ТРАНСПОРТ") {
             ForEach(TransportKind.allCases) { transport in
-                compactOption(
-                    icon: "point.3.connected.trianglepath.dotted",
-                    title: transport.rawValue,
-                    subtitle: transport == .automatic ? "Подбирать канал автоматически по текущей сети" : "Всегда использовать этот способ подключения",
-                    selected: viewModel.preferredTransport == transport
-                ) {
+                compactOption(icon: "point.3.connected.trianglepath.dotted", title: transport.rawValue, subtitle: transport == .automatic ? "Подбирать канал автоматически по текущей сети" : "Всегда использовать этот способ подключения", selected: viewModel.preferredTransport == transport) {
                     viewModel.preferredTransport = transport
                 }
             }
@@ -137,14 +103,31 @@ struct SettingsView: View {
         }
     }
 
+    private var diagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ДИАГНОСТИКА").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary).padding(.leading, 5)
+            NavigationLink {
+                LogsView()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass").font(.body.weight(.semibold)).frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Логи").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        Text("Активация, backend, VPN-профиль и системные статусы").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 14)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1) }
+            }.buttonStyle(.plain)
+        }
+    }
+
     private var subscriptionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("ПОДПИСКА")
-                .font(.caption.weight(.bold))
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 5)
-
+            Text("ПОДПИСКА").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary).padding(.leading, 5)
             Button { showingSubscriptionEditor = true } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "arrow.triangle.2.circlepath").frame(width: 28)
@@ -155,14 +138,10 @@ struct SettingsView: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 14).padding(.vertical, 14)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1)
-                }
-            }
-            .buttonStyle(.plain)
+                .overlay { RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1) }
+            }.buttonStyle(.plain)
         }
     }
 
@@ -174,9 +153,7 @@ struct SettingsView: View {
     }
 
     private func compactCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 0) { content() }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 3)
+        VStack(spacing: 0) { content() }.padding(.horizontal, 12).padding(.vertical, 3)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1) }
     }
@@ -191,27 +168,20 @@ struct SettingsView: View {
                 }
                 Spacer(minLength: 8)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.title3).foregroundStyle(selected ? .white : .secondary)
-            }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+            }.padding(.vertical, 10).contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 
     private func toggleRow(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
-                .frame(width: 28)
+            Image(systemName: icon).font(.body.weight(.semibold)).foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62)).frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold))
                 Text(subtitle).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             Toggle("", isOn: isOn).labelsHidden().tint(Color(red: 0.42, green: 0.52, blue: 0.62))
-        }
-        .padding(.vertical, 10)
+        }.padding(.vertical, 10)
     }
 
     private func latencyBadge(_ value: Int) -> some View {
@@ -219,11 +189,7 @@ struct SettingsView: View {
         return HStack(spacing: 4) {
             Circle().fill(tint).frame(width: 6, height: 6)
             Text("\(value) мс").font(.caption2.monospacedDigit().weight(.semibold))
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(tint.opacity(0.14), in: Capsule())
+        }.foregroundStyle(tint).padding(.horizontal, 9).padding(.vertical, 5).background(tint.opacity(0.14), in: Capsule())
     }
 
     private var subscriptionEditor: some View {
@@ -231,25 +197,13 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: "link").foregroundStyle(Color(red: 0.42, green: 0.52, blue: 0.62))
-                    TextField("https://example.com/subscription/...", text: $subscriptionLink)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                }
-                .padding(14)
-                .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    TextField("darktunnel://activate?d=...", text: $subscriptionLink).textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+                }.padding(14).background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 Text("Ссылка хранится только на этом iPhone.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
-            .padding(18)
-            .navigationTitle("Ссылка активации")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Готово") { showingSubscriptionEditor = false }.fontWeight(.semibold)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
+            .padding(18).navigationTitle("Ссылка активации").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { showingSubscriptionEditor = false }.fontWeight(.semibold) } }
+        }.preferredColorScheme(.dark)
     }
 }
