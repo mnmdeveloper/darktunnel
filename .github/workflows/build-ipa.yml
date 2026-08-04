@@ -21,32 +21,17 @@ jobs:
         run: |
           set -euo pipefail
           OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
-
-          clean_b64() {
-            printf '%s' "$1" | tr -d '\r\n\t '
-          }
-
+          clean_b64() { printf '%s' "$1" | tr -d '\r\n\t '; }
           clean_b64 "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.original.p12"
           clean_b64 "$MOBILEPROVISION_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
-
           if ! "$OPENSSL" pkcs12 -legacy -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -info -noout >/dev/null 2>&1; then
             if LC_ALL=C grep -Eq '^[A-Za-z0-9+/=[:space:]]+$' "$RUNNER_TEMP/certificate.original.p12"; then
               tr -d '\r\n\t ' < "$RUNNER_TEMP/certificate.original.p12" | base64 --decode > "$RUNNER_TEMP/certificate.fixed.p12"
               mv "$RUNNER_TEMP/certificate.fixed.p12" "$RUNNER_TEMP/certificate.original.p12"
             fi
           fi
-
-          "$OPENSSL" pkcs12 -legacy \
-            -in "$RUNNER_TEMP/certificate.original.p12" \
-            -passin env:P12_PASSWORD \
-            -nodes \
-            -out "$RUNNER_TEMP/certificate.pem"
-
-          "$OPENSSL" pkcs12 -export -legacy \
-            -in "$RUNNER_TEMP/certificate.pem" \
-            -out "$RUNNER_TEMP/certificate.p12" \
-            -passout env:P12_PASSWORD
-
+          "$OPENSSL" pkcs12 -legacy -in "$RUNNER_TEMP/certificate.original.p12" -passin env:P12_PASSWORD -nodes -out "$RUNNER_TEMP/certificate.pem"
+          "$OPENSSL" pkcs12 -export -legacy -in "$RUNNER_TEMP/certificate.pem" -out "$RUNNER_TEMP/certificate.p12" -passout env:P12_PASSWORD
           "$OPENSSL" pkcs12 -legacy -in "$RUNNER_TEMP/certificate.p12" -passin env:P12_PASSWORD -info -noout >/dev/null
           security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" >/dev/null
           rm -f "$RUNNER_TEMP/certificate.pem" "$RUNNER_TEMP/certificate.original.p12"
@@ -85,6 +70,7 @@ jobs:
 
       - name: Archive demo application
         run: |
+          set +e
           xcodebuild archive \
             -project DarkTunnel.xcodeproj \
             -scheme DarkTunnel \
@@ -96,30 +82,32 @@ jobs:
             CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             CODE_SIGNING_ALLOWED=YES \
-            clean archive
+            clean archive 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          STATUS=${PIPESTATUS[0]}
+          if [ "$STATUS" -ne 0 ]; then
+            echo
+            echo '================ ACTUAL XCODE ERRORS ================'
+            grep -nE '(^|: )(error:|fatal error:)|ARCHIVE FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -80 || true
+            echo '====================================================='
+            exit "$STATUS"
+          fi
 
       - name: Export demo IPA
         run: |
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
+          <plist version="1.0"><dict>
             <key>method</key><string>ad-hoc</string>
             <key>signingStyle</key><string>manual</string>
             <key>teamID</key><string>$TEAM_ID</string>
-            <key>provisioningProfiles</key>
-            <dict>
+            <key>provisioningProfiles</key><dict>
               <key>app.lavender3512.currant6944</key><string>$PROFILE_NAME</string>
             </dict>
-          </dict>
-          </plist>
+          </dict></plist>
           EOF
           mkdir -p "$RUNNER_TEMP/export"
-          xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/DarkTunnel.xcarchive" \
-            -exportPath "$RUNNER_TEMP/export" \
-            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/DarkTunnel.xcarchive" -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
 
       - uses: actions/upload-artifact@v4
         with:
