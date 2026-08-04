@@ -49,13 +49,28 @@ final class VPNViewModel: ObservableObject {
         }
     }
 
+    private var normalizedVKLink: String {
+        vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var hasValidVKLink: Bool {
-        guard let url = URL(string: vkCallLink), let host = url.host else { return false }
-        return host.contains("vk.me") || host.contains("vk.com")
+        guard let url = URL(string: normalizedVKLink),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              scheme == "https" || scheme == "http" else {
+            return false
+        }
+
+        let validHost = host == "vk.ru" || host.hasSuffix(".vk.ru") ||
+            host == "vk.com" || host.hasSuffix(".vk.com") ||
+            host == "vk.me" || host.hasSuffix(".vk.me")
+        let validPath = url.path.contains("/call/") || url.path.contains("/call/join/")
+        return validHost && validPath
     }
 
     func saveVKLink() {
-        UserDefaults.standard.set(vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "vkCallLink")
+        vkCallLink = normalizedVKLink
+        UserDefaults.standard.set(vkCallLink, forKey: "vkCallLink")
     }
 
     func refreshConnectivity() {
@@ -83,13 +98,15 @@ final class VPNViewModel: ObservableObject {
 
             let chosenTransport = activeTransport
             if chosenTransport == .vkTurn && !hasValidVKLink {
-                connectionError = "Для режима VK TURN вставьте ссылку на VK-звонок"
+                connectionError = "Вставьте полную ссылку VK-звонка вида https://vk.ru/call/join/..."
                 state = .disconnected
                 return
             }
 
+            saveVKLink()
+
             do {
-                try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: vkCallLink)
+                try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: normalizedVKLink)
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
                 if liveActivitiesEnabled {
