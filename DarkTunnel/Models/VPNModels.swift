@@ -29,20 +29,17 @@ enum TransportKind: String, CaseIterable, Identifiable {
     case automatic = "Автоматически"
     case amneziaWG = "AmneziaWG 2.0"
     case vkTurn = "VK TURN"
-    case wdtt = "WDTT"
 
     var id: String { rawValue }
 
     var description: String {
         switch self {
         case .automatic:
-            return "Проверять VK и внешний интернет, затем выбирать подходящий канал"
+            return "Проверять VK и внешний интернет, затем выбирать AmneziaWG или режим VK TURN"
         case .amneziaWG:
             return "Обычный VPN через AmneziaWG"
         case .vkTurn:
-            return "WireGuard-трафик через активный VK-звонок и TURN"
-        case .wdtt:
-            return "Резервный WDTT-транспорт, если VK TURN недоступен"
+            return "VPN через VK-звонок и TURN, как в тестовом VKTurnProxy"
         }
     }
 }
