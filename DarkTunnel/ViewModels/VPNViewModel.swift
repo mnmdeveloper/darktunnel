@@ -10,7 +10,7 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = false
     @Published var reconnectAfterWake = true
     @Published var routeAPNsThroughVPN = false
-    @Published var showsAnnouncement = true
+    @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
 
     let servers = VPNServer.samples
 
@@ -18,69 +18,69 @@ final class VPNViewModel: ObservableObject {
 
     var activeTransport: TransportKind {
         switch preferredTransport {
-        case .automatic:
-            return networkName.contains("Wi") ? .amneziaWG : .wdtt
-        case .amneziaWG:
-            return .amneziaWG
-        case .wdtt:
-            return .wdtt
+        case .automatic: return networkName.contains("Wi") ? .amneziaWG : .wdtt
+        case .amneziaWG: return .amneziaWG
+        case .wdtt: return .wdtt
         }
     }
 
     var statusDetail: String {
         switch state {
-        case .disconnected:
-            "Трафик идёт напрямую"
-        case .connecting:
-            "Проверяем сеть и выбираем протокол"
-        case .connected:
-            "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
-        case .reconnecting:
-            "Ищем доступный сервер"
+        case .disconnected: return "Трафик идёт напрямую"
+        case .connecting: return "Подготавливаем защищённый канал"
+        case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
+        case .reconnecting: return "Переключаем сервер"
         }
+    }
+
+    var hasValidVKLink: Bool {
+        guard let url = URL(string: vkCallLink), let host = url.host else { return false }
+        return host.contains("vk.me") || host.contains("vk.com")
+    }
+
+    func saveVKLink() {
+        UserDefaults.standard.set(vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "vkCallLink")
     }
 
     func toggleConnection() {
         switch state {
-        case .disconnected:
-            connect()
-        case .connecting, .reconnecting, .connected:
-            disconnect()
+        case .disconnected: connect()
+        case .connecting, .reconnecting, .connected: disconnect()
         }
     }
 
     func connect() {
         state = .connecting
         Task {
-            try? await Task.sleep(for: .milliseconds(900))
+            try? await Task.sleep(for: .milliseconds(700))
             guard state == .connecting else { return }
-            withAnimation(.easeInOut(duration: 0.35)) {
-                state = .connected
-            }
+            withAnimation(.snappy(duration: 0.35)) { state = .connected }
+            LiveActivityController.shared.start(
+                server: selectedServer.city,
+                latency: selectedServer.latencyMilliseconds,
+                transport: activeTransport.rawValue
+            )
         }
     }
 
     func disconnect() {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            state = .disconnected
-        }
+        withAnimation(.snappy(duration: 0.3)) { state = .disconnected }
+        LiveActivityController.shared.end()
     }
 
     func select(_ server: VPNServer) {
         selectedServer = server
-        if state == .connected {
-            state = .reconnecting
-            Task {
-                try? await Task.sleep(for: .milliseconds(650))
-                guard state == .reconnecting else { return }
-                state = .connected
-            }
-        }
-    }
-
-    func dismissAnnouncement() {
-        withAnimation(.easeInOut) {
-            showsAnnouncement = false
+        guard state == .connected else { return }
+        state = .reconnecting
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard state == .reconnecting else { return }
+            state = .connected
+            LiveActivityController.shared.update(
+                server: selectedServer.city,
+                latency: selectedServer.latencyMilliseconds,
+                transport: activeTransport.rawValue
+            )
         }
     }
 }
