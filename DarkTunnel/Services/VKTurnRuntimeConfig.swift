@@ -1,9 +1,8 @@
 import Foundation
 
 struct VKTurnRuntimeConfig {
-    static let host = "31.77.148.80"
-    static let port = 56000
-
+    let host: String
+    let port: Int
     let callLink: String
     let serverPassword: String
     let deviceID: String
@@ -14,13 +13,13 @@ struct VKTurnRuntimeConfig {
         if let existing = defaults.string(forKey: "vkTurnDeviceID"), !existing.isEmpty {
             return existing
         }
-
         let value = UUID().uuidString.lowercased()
         defaults.set(value, forKey: "vkTurnDeviceID")
         return value
     }
 
     var isComplete: Bool {
+        !host.isEmpty && port > 0 &&
         !callLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !serverPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !deviceID.isEmpty
@@ -28,12 +27,9 @@ struct VKTurnRuntimeConfig {
 
     var proxyConfigJSON: String? {
         guard isComplete else { return nil }
-
-        // Exact ProxyConfig coding keys from anton48/vk-turn-proxy-ios.
-        // WRAP-A is its own mode and must not be combined with DTLS/SRTP flags.
         let object: [String: Any] = [
             "vk_link": callLink.trimmingCharacters(in: .whitespacesAndNewlines),
-            "peer_addr": "\(Self.host):\(Self.port)",
+            "peer_addr": "\(host):\(port)",
             "use_dtls": false,
             "use_udp": false,
             "use_wrap": false,
@@ -43,12 +39,9 @@ struct VKTurnRuntimeConfig {
             "device_id": deviceID,
             "num_conns": max(1, min(connections, 50))
         ]
-
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object),
-              let json = String(data: data, encoding: .utf8) else {
-            return nil
-        }
+              let json = String(data: data, encoding: .utf8) else { return nil }
         return json
     }
 }
