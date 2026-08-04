@@ -17,6 +17,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
         case "vk-turn-wireguard":
             startVKTurnWireGuardScaffold(configuration: configuration, completionHandler: completionHandler)
+        case "wdtt-wireguard":
+            startWDTTWireGuardScaffold(configuration: configuration, completionHandler: completionHandler)
         default:
             startAmneziaScaffold(configuration: configuration, completionHandler: completionHandler)
         }
@@ -53,6 +55,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         )
     }
 
+    private func startWDTTWireGuardScaffold(
+        configuration: [String: Any],
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        let host = configuration["wdttHost"] as? String ?? "31.77.148.80"
+        let port = configuration["wdttPort"] as? Int ?? 56000
+
+        logger.notice(
+            "Starting WDTT + WireGuard fallback scaffold at \(host, privacy: .public):\(port, privacy: .public)"
+        )
+
+        applyScaffoldSettings(
+            remoteAddress: host,
+            clientAddress: "10.66.66.2",
+            completionHandler: completionHandler
+        )
+    }
+
     private func applyScaffoldSettings(
         remoteAddress: String,
         clientAddress: String,
@@ -64,7 +84,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             subnetMasks: ["255.255.255.255"]
         )
 
-        // Пока движки не подключены, не перехватываем маршруты, чтобы не ломать интернет.
         ipv4.includedRoutes = []
         settings.ipv4Settings = ipv4
         settings.dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "1.0.0.1"])
