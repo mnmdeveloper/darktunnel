@@ -1,0 +1,59 @@
+name: Build unsigned IPA for ESign
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate full project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build app and PacketTunnel without signing
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project DarkTunnel.xcodeproj \
+            -scheme DarkTunnel \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            clean build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
+          test -d "$APP_PATH"
+          test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
+
+          mkdir -p "$RUNNER_TEMP/package/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/"
+          rm -rf "$RUNNER_TEMP/package/Payload/DarkTunnel.app/_CodeSignature"
+          rm -f "$RUNNER_TEMP/package/Payload/DarkTunnel.app/embedded.mobileprovision"
+          rm -rf "$RUNNER_TEMP/package/Payload/DarkTunnel.app/PlugIns/PacketTunnel.appex/_CodeSignature"
+          rm -f "$RUNNER_TEMP/package/Payload/DarkTunnel.app/PlugIns/PacketTunnel.appex/embedded.mobileprovision"
+
+          cd "$RUNNER_TEMP/package"
+          /usr/bin/zip -qry "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" Payload
+
+      - name: Inspect package
+        run: |
+          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/' | head -40
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DarkTunnel-unsigned-for-ESign
+          path: ${{ runner.temp }}/DarkTunnel-unsigned-for-ESign.ipa
