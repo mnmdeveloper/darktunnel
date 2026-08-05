@@ -25,21 +25,23 @@ enum VPNConnectionState: Equatable {
     }
 }
 
-enum TransportKind: String, CaseIterable, Identifiable {
+enum TransportKind: String, Identifiable {
     case automatic = "Автоматически"
     case amneziaWG = "AmneziaWG 2.0"
     case vkTurn = "VK TURN"
+
+    static let allCases: [TransportKind] = [.automatic, .vkTurn]
 
     var id: String { rawValue }
 
     var description: String {
         switch self {
         case .automatic:
-            return "Проверять VK и внешний интернет, затем выбирать AmneziaWG или режим VK TURN"
+            return "Подключаться через VK TURN и сохранённую конфигурацию сервера"
         case .amneziaWG:
-            return "Обычный VPN через AmneziaWG"
+            return "Недоступно в этой сборке"
         case .vkTurn:
-            return "VPN через VK-звонок и TURN, как в тестовом VKTurnProxy"
+            return "Сначала VK TURN, затем WDTT и встроенный WireGuard"
         }
     }
 }
@@ -91,34 +93,4 @@ struct VPNServer: Identifiable, Hashable {
     var coordinate: CLLocationCoordinate2D {
         .init(latitude: latitude, longitude: longitude)
     }
-
-    static let samples: [VPNServer] = [
-        .init(
-            name: "Auto · Washington",
-            country: "США",
-            city: "Washington",
-            flag: "🇺🇸",
-            latitude: 38.9072,
-            longitude: -77.0369,
-            latencyMilliseconds: 92
-        ),
-        .init(
-            name: "Helsinki",
-            country: "Финляндия",
-            city: "Helsinki",
-            flag: "🇫🇮",
-            latitude: 60.1699,
-            longitude: 24.9384,
-            latencyMilliseconds: 47
-        ),
-        .init(
-            name: "Frankfurt",
-            country: "Германия",
-            city: "Frankfurt",
-            flag: "🇩🇪",
-            latitude: 50.1109,
-            longitude: 8.6821,
-            latencyMilliseconds: 61
-        )
-    ]
 }
