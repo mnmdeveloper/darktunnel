@@ -45,6 +45,10 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.bot_entry"]
     network_mode: "service:vkturn"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     env_file: ./backend/.env
     depends_on:
       - db
