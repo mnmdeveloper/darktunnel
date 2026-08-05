@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
@@ -18,7 +19,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DarkTunnel Backend", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="DarkTunnel Backend", version="0.4.0", lifespan=lifespan)
+app.include_router(admin_management_router)
 
 
 @app.get("/health")
