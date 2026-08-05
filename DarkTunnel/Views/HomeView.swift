@@ -94,7 +94,7 @@ struct HomeView: View {
                     Text(viewModel.serverDisplayName).font(.title2.bold())
                     Text(viewModel.statusDetail)
                         .font(.caption)
-                        .foregroundStyle(viewModel.connectionError == nil ? .secondary : .red)
+                        .foregroundStyle(viewModel.connectionError == nil ? Color.secondary : Color.red)
                         .lineLimit(3)
                 }
                 Spacer()
