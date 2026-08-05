@@ -6,20 +6,18 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import String, select
+from sqlalchemy import select
 
 from .bot import router as legacy_router
 from .bot_features import router as features_router
-from . import bot_management
+from .bot_management import router as management_router
+from .bot_vkturn import router as vkturn_router, sync_peers_forever
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
 from .server_crypto import encrypt_server_config
 from .services import _read_wdtt_password
 
-# Compatibility for search expressions inside the management module.
-bot_management.String = String
-management_router = bot_management.router
 menu_router = Router(name="main-menu")
 
 
@@ -30,11 +28,12 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [button("📊 Статистика", "stats"), button("👥 Пользователи", "users:0")],
-        [button("🔑 Доступ и ссылки", "access"), button("🖥 Серверы", "servers")],
+        [button("🔑 DarkTurn ссылки", "access"), button("📡 VK Turn", "vkturn")],
+        [button("🖥 Серверы", "servers"), button("💳 Продажи", "sales")],
         [button("🎨 Темы", "themes"), button("📢 Объявления", "announcements")],
         [button("🚨 Техработы", "maintenance"), button("📲 Push", "push")],
-        [button("👮 Администраторы", "admins"), button("💳 Продажи", "sales")],
-        [button("🧾 Журнал", "audit:0"), button("⚙️ Настройки", "settings")],
+        [button("👮 Администраторы", "admins"), button("🧾 Журнал", "audit:0")],
+        [button("⚙️ Настройки", "settings")],
     ])
 
 
@@ -96,7 +95,7 @@ async def start(message: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await message.answer(
-        "<b>DarkTunnel Admin</b>\n\nУправление пользователями, ссылками, серверами и контентом.",
+        "<b>DarkTunnel Admin</b>\n\nDarkTurn и VK Turn управляются отдельно.",
         reply_markup=menu(),
         parse_mode="HTML",
     )
@@ -128,9 +127,11 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
+    dispatcher.include_router(vkturn_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(features_router)
     dispatcher.include_router(legacy_router)
+    asyncio.create_task(sync_peers_forever())
     await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
