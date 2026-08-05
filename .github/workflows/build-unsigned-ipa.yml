@@ -1,7 +1,13 @@
 name: Build unsigned IPA for ESign
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: unsigned-ipa-main
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -60,7 +66,7 @@ jobs:
           if [ "$STATUS" -ne 0 ]; then
             echo
             echo '================ ACTUAL XCODE ERRORS ================'
-            grep -nE '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -160 || true
+            grep -nE '(^|: )(error:|fatal error:)|BUILD FAILED|The following build commands failed' "$RUNNER_TEMP/xcodebuild.log" | tail -200 || true
             echo '====================================================='
             exit "$STATUS"
           fi
@@ -83,9 +89,10 @@ jobs:
 
       - name: Inspect package
         run: |
-          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/|DarkTunnelLiveActivity.appex/' | head -120
+          unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/|PacketTunnel.appex/|DarkTunnelLiveActivity.appex/' | head -160
 
       - uses: actions/upload-artifact@v4
         with:
           name: DarkTunnel-unsigned-for-ESign
           path: ${{ runner.temp }}/DarkTunnel-unsigned-for-ESign.ipa
+          retention-days: 14
