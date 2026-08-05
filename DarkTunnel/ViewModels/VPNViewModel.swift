@@ -26,7 +26,7 @@ final class VPNViewModel: ObservableObject {
     private var remoteServers: [UUID: RemoteVPNServer] = [:]
 
     init() {
-        Task { await refreshServers() }
+        restoreLocalServers()
     }
 
     var networkName: String { "Текущая сеть" }
@@ -34,7 +34,7 @@ final class VPNViewModel: ObservableObject {
     var selectedServerHost: String { selectedRemoteServer?.host ?? ActivationStore.shared.serverProfile?.host ?? "—" }
 
     var serverDisplayName: String {
-        if servers.isEmpty { return "Нет доступных серверов" }
+        if servers.isEmpty { return "Нет сохранённых серверов" }
         return usesAutomaticServer ? "Автовыбор" : (selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city)
     }
 
@@ -48,8 +48,8 @@ final class VPNViewModel: ObservableObject {
 
     var statusDetail: String {
         switch state {
-        case .disconnected: return connectionError ?? connectivity.summary
-        case .connecting: return "Подключаем VK TURN и защищённый туннель"
+        case .disconnected: return connectionError ?? "Готов к подключению через VK TURN"
+        case .connecting: return "Сначала подключаемся к VK TURN, затем открываем туннель к серверу"
         case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
         case .reconnecting: return "Переключаем сервер"
         }
@@ -58,7 +58,10 @@ final class VPNViewModel: ObservableObject {
     private var normalizedVKLink: String { vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var hasValidVKLink: Bool {
-        guard let url = URL(string: normalizedVKLink), let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+        guard let url = URL(string: normalizedVKLink),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              scheme == "https" || scheme == "http" else { return false }
         let validHost = host == "vk.ru" || host.hasSuffix(".vk.ru") || host == "vk.com" || host.hasSuffix(".vk.com") || host == "vk.me" || host.hasSuffix(".vk.me")
         return validHost && url.path.contains("/call/")
     }
@@ -75,24 +78,20 @@ final class VPNViewModel: ObservableObject {
         isRefreshingServers = true
         defer { isRefreshingServers = false }
         do {
-            let remote = try await ServerDirectoryClient.shared.fetchServers()
-            remoteServers = Dictionary(uniqueKeysWithValues: remote.map { ($0.displayModel.id, $0) })
-            servers = remote.map(\.displayModel)
-            guard !servers.isEmpty else { throw ServerDirectoryError.noServers }
-            if usesAutomaticServer {
-                let recommended = try await ServerDirectoryClient.shared.fetchRecommended()
-                selectedServer = recommended.displayModel
-                remoteServers[selectedServer.id] = recommended
-            } else if !servers.contains(where: { $0.id == selectedServer.id }) {
-                selectedServer = servers[0]
-            }
+            let fetched = try await ServerDirectoryClient.shared.fetchServers()
+            let merged = ServerDirectoryCache.merge(fetched, provisioned: ActivationStore.shared.serverProfile)
+            ServerDirectoryCache.save(merged)
+            apply(merged, preserveSelection: true)
             connectionError = nil
-            AppLog.shared.info("Servers", "Получено серверов: \(servers.count)")
+            AppLog.shared.info("Servers", "Список серверов обновлён: \(servers.count)")
         } catch {
-            servers = []
-            remoteServers = [:]
-            connectionError = "Не удалось загрузить серверы: \(error.localizedDescription)"
-            AppLog.shared.error("Servers", error.localizedDescription)
+            if servers.isEmpty {
+                restoreLocalServers()
+            }
+            if servers.isEmpty {
+                connectionError = "Нет сохранённой конфигурации сервера"
+            }
+            AppLog.shared.warning("Servers", "Backend недоступен, используется локальная конфигурация: \(error.localizedDescription)")
         }
     }
 
@@ -109,46 +108,59 @@ final class VPNViewModel: ObservableObject {
         Task {
             connectivity = await ConnectivityDiagnostics.shared.run()
             guard connectivity.hasNetworkPath else {
-                connectionError = "Нет доступа к сети"
+                connectionError = "Нет сетевого подключения"
                 state = .disconnected
                 return
             }
-            if servers.isEmpty { await refreshServers() }
+
+            if servers.isEmpty {
+                restoreLocalServers()
+            }
             guard !servers.isEmpty else {
+                connectionError = "Нет сохранённой конфигурации. Повторите активацию по ссылке"
                 state = .disconnected
                 return
             }
+
             if usesAutomaticServer {
-                do {
-                    let recommended = try await ServerDirectoryClient.shared.fetchRecommended()
-                    selectedServer = recommended.displayModel
-                    remoteServers[selectedServer.id] = recommended
-                } catch {
-                    connectionError = "Автовыбор недоступен: \(error.localizedDescription)"
-                    state = .disconnected
-                    return
-                }
+                selectBestLocalServer()
             }
+
             let chosenTransport = activeTransport
             if chosenTransport == .vkTurn && !hasValidVKLink {
                 connectionError = "Вставьте ссылку VK-звонка вида https://vk.ru/call/join/..."
                 state = .disconnected
                 return
             }
+
             saveVKLink()
             guard let profile = remoteServers[selectedServer.id]?.tunnelProfile ?? ActivationStore.shared.serverProfile else {
-                connectionError = "Конфигурация сервера недоступна"
+                connectionError = "Сохранённая конфигурация сервера повреждена"
                 state = .disconnected
                 return
             }
-            UserDefaults.standard.set(speedMode == .balanced ? profile.connectionsBalanced : profile.connectionsMaximum, forKey: "vkTurnConnections")
+
+            UserDefaults.standard.set(
+                speedMode == .balanced ? profile.connectionsBalanced : profile.connectionsMaximum,
+                forKey: "vkTurnConnections"
+            )
+
             do {
-                try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: normalizedVKLink, profile: profile)
+                try await VPNController.shared.connect(
+                    transport: chosenTransport,
+                    vkCallLink: normalizedVKLink,
+                    profile: profile
+                )
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
                 if liveActivitiesEnabled {
-                    LiveActivityController.shared.start(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: chosenTransport.rawValue)
+                    LiveActivityController.shared.start(
+                        server: selectedServer.city,
+                        latency: selectedServer.latencyMilliseconds,
+                        transport: chosenTransport.rawValue
+                    )
                 }
+                Task { await refreshServers() }
             } catch {
                 connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
                 state = .disconnected
@@ -170,16 +182,45 @@ final class VPNViewModel: ObservableObject {
 
     func selectAutomaticServer() {
         usesAutomaticServer = true
-        Task {
-            await refreshServers()
-            reconnectIfNeeded()
-        }
+        selectBestLocalServer()
+        reconnectIfNeeded()
     }
 
     func select(_ server: VPNServer) {
         usesAutomaticServer = false
         selectedServer = server
         reconnectIfNeeded()
+    }
+
+    private func restoreLocalServers() {
+        let merged = ServerDirectoryCache.merge(
+            ServerDirectoryCache.load(),
+            provisioned: ActivationStore.shared.serverProfile
+        )
+        if !merged.isEmpty {
+            ServerDirectoryCache.save(merged)
+        }
+        apply(merged, preserveSelection: false)
+    }
+
+    private func apply(_ remote: [RemoteVPNServer], preserveSelection: Bool) {
+        let previousID = selectedServer.id
+        remoteServers = Dictionary(uniqueKeysWithValues: remote.map { ($0.displayModel.id, $0) })
+        servers = remote.map(\.displayModel)
+        if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) {
+            selectedServer = existing
+        } else {
+            selectBestLocalServer()
+        }
+    }
+
+    private func selectBestLocalServer() {
+        guard !servers.isEmpty else { return }
+        selectedServer = servers.min {
+            let lhs = $0.latencyMilliseconds > 0 ? $0.latencyMilliseconds : Int.max
+            let rhs = $1.latencyMilliseconds > 0 ? $1.latencyMilliseconds : Int.max
+            return lhs < rhs
+        } ?? servers[0]
     }
 
     private func reconnectIfNeeded() {
