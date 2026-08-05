@@ -28,7 +28,7 @@ services:
   bot:
     build: ./backend
     restart: unless-stopped
-    command: ["python", "-m", "app.bot"]
+    command: ["python", "-m", "app.bot_entry"]
     env_file: ./backend/.env
     depends_on:
       - db
