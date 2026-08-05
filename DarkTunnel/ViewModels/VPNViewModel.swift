@@ -49,7 +49,7 @@ final class VPNViewModel: ObservableObject {
     var statusDetail: String {
         switch state {
         case .disconnected: return connectionError ?? "Готов к подключению через VK TURN"
-        case .connecting: return "Сначала подключаемся к VK TURN, затем открываем туннель к серверу"
+        case .connecting: return "Подключаемся к VK TURN и через него открываем WDTT"
         case .connected: return "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс"
         case .reconnecting: return "Переключаем сервер"
         }
@@ -85,12 +85,8 @@ final class VPNViewModel: ObservableObject {
             connectionError = nil
             AppLog.shared.info("Servers", "Список серверов обновлён: \(servers.count)")
         } catch {
-            if servers.isEmpty {
-                restoreLocalServers()
-            }
-            if servers.isEmpty {
-                connectionError = "Нет сохранённой конфигурации сервера"
-            }
+            if servers.isEmpty { restoreLocalServers() }
+            if servers.isEmpty { connectionError = "Нет сохранённой конфигурации сервера" }
             AppLog.shared.warning("Servers", "Backend недоступен, используется локальная конфигурация: \(error.localizedDescription)")
         }
     }
@@ -106,25 +102,14 @@ final class VPNViewModel: ObservableObject {
         connectionError = nil
         state = .connecting
         Task {
-            connectivity = await ConnectivityDiagnostics.shared.run()
-            guard connectivity.hasNetworkPath else {
-                connectionError = "Нет сетевого подключения"
-                state = .disconnected
-                return
-            }
-
-            if servers.isEmpty {
-                restoreLocalServers()
-            }
+            if servers.isEmpty { restoreLocalServers() }
             guard !servers.isEmpty else {
                 connectionError = "Нет сохранённой конфигурации. Повторите активацию по ссылке"
                 state = .disconnected
                 return
             }
 
-            if usesAutomaticServer {
-                selectBestLocalServer()
-            }
+            if usesAutomaticServer { selectBestLocalServer() }
 
             let chosenTransport = activeTransport
             if chosenTransport == .vkTurn && !hasValidVKLink {
@@ -160,7 +145,10 @@ final class VPNViewModel: ObservableObject {
                         transport: chosenTransport.rawValue
                     )
                 }
-                Task { await refreshServers() }
+                Task {
+                    connectivity = await ConnectivityDiagnostics.shared.run()
+                    await refreshServers()
+                }
             } catch {
                 connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
                 state = .disconnected
@@ -197,9 +185,7 @@ final class VPNViewModel: ObservableObject {
             ServerDirectoryCache.load(),
             provisioned: ActivationStore.shared.serverProfile
         )
-        if !merged.isEmpty {
-            ServerDirectoryCache.save(merged)
-        }
+        if !merged.isEmpty { ServerDirectoryCache.save(merged) }
         apply(merged, preserveSelection: false)
     }
 
