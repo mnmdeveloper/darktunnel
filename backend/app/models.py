@@ -62,28 +62,6 @@ class Activation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class VkTurnAccess(Base):
-    __tablename__ = "vkturn_accesses"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
-    note: Mapped[str] = mapped_column(String(200), default="")
-    private_key: Mapped[str] = mapped_column(Text)
-    public_key: Mapped[str] = mapped_column(Text, unique=True, index=True)
-    tunnel_ip: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class VkTurnSetting(Base):
-    __tablename__ = "vkturn_settings"
-
-    key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    value: Mapped[str] = mapped_column(Text, default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-
 class ServerNode(Base):
     __tablename__ = "servers"
 
