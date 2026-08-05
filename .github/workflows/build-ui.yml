@@ -11,21 +11,56 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Checkout
+      - name: Checkout app
         uses: actions/checkout@v4
+
+      - name: Checkout VK TURN engine
+        uses: actions/checkout@v4
+        with:
+          repository: anton48/vk-turn-proxy-ios
+          ref: main
+          path: Vendor/vk-turn-proxy-ios
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+          cache-dependency-path: Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Build simulator target
+      - name: Build WireGuard TURN bridge
+        working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
         run: |
-          xcodebuild \
+          set -euo pipefail
+          make clean
+          make xcframework
+          test -d build/WireGuardTURN.xcframework
+
+      - name: Generate full project
+        run: xcodegen generate --spec project-unsigned.yml
+
+      - name: Build real device configuration without signing
+        run: |
+          set -o pipefail
+          xcodebuild build \
             -project DarkTunnel.xcodeproj \
             -scheme DarkTunnel \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
-            clean build
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            DEVELOPMENT_TEAM='' \
+            clean build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Verify embedded extensions
+        run: |
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
+          test -d "$APP_PATH"
+          test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
+          test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
