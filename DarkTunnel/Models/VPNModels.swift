@@ -25,21 +25,19 @@ enum VPNConnectionState: Equatable {
     }
 }
 
-enum TransportKind: String, Identifiable {
+enum TransportKind: String, CaseIterable, Identifiable {
     case automatic = "Автоматически"
     case amneziaWG = "AmneziaWG 2.0"
     case vkTurn = "VK TURN"
-
-    static let allCases: [TransportKind] = [.automatic, .vkTurn]
 
     var id: String { rawValue }
 
     var description: String {
         switch self {
         case .automatic:
-            return "Подключаться через VK TURN и сохранённую конфигурацию сервера"
+            return "Подбирать доступный транспорт по текущей сети"
         case .amneziaWG:
-            return "Недоступно в этой сборке"
+            return "Подключаться напрямую через AmneziaWG 2.0"
         case .vkTurn:
             return "Сначала VK TURN, затем WDTT и встроенный WireGuard"
         }
