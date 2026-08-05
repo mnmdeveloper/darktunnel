@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="", repr=False)
     telegram_owner_id: int = 0
     activation_encryption_key: str = Field(default="", repr=False)
+    server_config_encryption_key: str = Field(default="", repr=False)
 
     wdtt_env_path: str = "/host/etc/wdtt/wdtt.env"
     wdtt_public_host: str = "31.77.148.80"
