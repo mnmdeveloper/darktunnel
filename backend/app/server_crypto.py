@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import os
 
@@ -7,18 +8,32 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .config import get_settings
 
 
-def _master_key() -> bytes:
-    raw = get_settings().server_config_encryption_key
-    if not raw:
+def _decode_key(raw: str) -> bytes:
+    normalized = "".join(raw.strip().strip('"').strip("'").split())
+    if not normalized:
         raise RuntimeError("SERVER_CONFIG_ENCRYPTION_KEY is not configured")
-    key = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
-    if len(key) != 32:
-        raise RuntimeError("SERVER_CONFIG_ENCRYPTION_KEY must decode to 32 bytes")
-    return key
+
+    candidates = [normalized]
+    if "-" in normalized or "_" in normalized:
+        candidates.append(normalized.replace("-", "+").replace("_", "/"))
+
+    for candidate in candidates:
+        try:
+            padded = candidate + "=" * (-len(candidate) % 4)
+            key = base64.b64decode(padded, validate=True)
+            if len(key) == 32:
+                return key
+        except (binascii.Error, ValueError):
+            continue
+
+    raise RuntimeError("SERVER_CONFIG_ENCRYPTION_KEY is invalid; generate a new 32-byte base64 key")
+
+
+def _master_key() -> bytes:
+    return _decode_key(get_settings().server_config_encryption_key)
 
 
 def encrypt_server_config(payload: dict[str, object]) -> str:
-    # Per-record data key + wrapped key. The master key never enters the DB.
     data_key = AESGCM.generate_key(bit_length=256)
     data_nonce = os.urandom(12)
     key_nonce = os.urandom(12)
