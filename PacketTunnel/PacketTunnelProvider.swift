@@ -1,4 +1,5 @@
 import Darwin
+import Foundation
 import Network
 import NetworkExtension
 import os
@@ -198,8 +199,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             var length = socklen_t(buffer.count)
             let result = getsockopt(
                 descriptor,
-                2, // SYSPROTO_CONTROL
-                2, // UTUN_OPT_IFNAME
+                2,
+                2,
                 &buffer,
                 &length
             )
@@ -223,7 +224,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
-        // TURN allocations and DTLS sessions are intentionally preserved.
         completionHandler()
     }
 
