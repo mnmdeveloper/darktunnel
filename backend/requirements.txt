@@ -7,3 +7,4 @@ asyncpg==0.30.0
 alembic==1.16.4
 redis==6.2.0
 cryptography==45.0.5
+asyncssh==2.21.1
