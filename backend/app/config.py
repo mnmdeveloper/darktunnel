@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     server_config_encryption_key: str = Field(default="", repr=False)
 
     wdtt_env_path: str = "/host/etc/wdtt/wdtt.env"
+    wdtt_vk_call_link: str = Field(default="", repr=False)
     wdtt_public_host: str = "31.77.148.80"
     wdtt_public_port: int = 56000
     wdtt_mode: str = "srtp-wrap-a"
