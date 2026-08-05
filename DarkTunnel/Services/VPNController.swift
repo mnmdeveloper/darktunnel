@@ -17,9 +17,8 @@ final class VPNController: ObservableObject {
         }
     }
 
-    func prepare(transport: TransportKind, vkCallLink: String) async throws {
+    func prepare(transport: TransportKind, vkCallLink: String, profile: DarkTunnelServerProfile) async throws {
         guard transport != .amneziaWG else { throw VPNControllerError.amneziaNotReady }
-        guard let profile = ActivationStore.shared.serverProfile else { throw VPNControllerError.missingProvisionedProfile }
 
         let managers = try await NETunnelProviderManager.loadAllFromPreferences()
         let manager = managers.first ?? NETunnelProviderManager()
@@ -67,9 +66,9 @@ final class VPNController: ObservableObject {
         AppLog.shared.info("VPN", "Профиль подготовлен для \(profile.host):\(profile.port)")
     }
 
-    func connect(transport: TransportKind, vkCallLink: String) async throws {
+    func connect(transport: TransportKind, vkCallLink: String, profile: DarkTunnelServerProfile) async throws {
         AppLog.shared.info("VPN", "Запуск подключения через \(transport.rawValue)")
-        try await prepare(transport: transport, vkCallLink: vkCallLink)
+        try await prepare(transport: transport, vkCallLink: vkCallLink, profile: profile)
         guard let manager else { throw VPNControllerError.managerUnavailable }
         try manager.connection.startVPNTunnel()
         try await waitUntilConnected(manager: manager, timeout: 155)
@@ -111,7 +110,6 @@ final class VPNController: ObservableObject {
 
 private enum VPNControllerError: LocalizedError {
     case managerUnavailable
-    case missingProvisionedProfile
     case invalidVKConfiguration
     case tunnelStoppedBeforeReady
     case connectionTimeout
@@ -120,7 +118,6 @@ private enum VPNControllerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .managerUnavailable: return "Системный VPN-профиль недоступен"
-        case .missingProvisionedProfile: return "Серверный профиль не выдан. Повторите активацию по ссылке"
         case .invalidVKConfiguration: return "Не удалось сформировать настройки VK TURN"
         case .tunnelStoppedBeforeReady: return "VK TURN или WDTT отклонил подключение. Проверьте ссылку звонка"
         case .connectionTimeout: return "Туннель не подключился за отведённое время"
