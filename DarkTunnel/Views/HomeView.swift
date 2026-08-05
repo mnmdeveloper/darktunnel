@@ -67,7 +67,7 @@ struct HomeView: View {
                 HStack(spacing: 7) {
                     if viewModel.isRefreshingServers { ProgressView().controlSize(.small).tint(.white) }
                     else { Image(systemName: "arrow.clockwise") }
-                    Text(viewModel.isRefreshingServers ? "Обновляем…" : "Обновить после подключения")
+                    Text(viewModel.state == .connected ? "Обновить каталог серверов" : "Каталог обновится после подключения")
                 }
                 .font(.caption.weight(.semibold))
                 .frame(maxWidth: .infinity)
@@ -75,6 +75,7 @@ struct HomeView: View {
                 .background(accent.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
             }
             .buttonStyle(.plain)
+            .disabled(viewModel.state != .connected || viewModel.isRefreshingServers)
         }
         .padding(14)
         .background(panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 24))
