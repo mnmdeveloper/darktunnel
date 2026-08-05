@@ -1,15 +1,20 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy import select
 
 from .bot import router as legacy_router
 from .bot_features import router as features_router
 from .config import get_settings
-from .db import init_db
+from .db import SessionLocal, init_db
+from .models import ServerHealth, ServerNode
+from .server_crypto import encrypt_server_config
+from .services import _read_wdtt_password
 
 menu_router = Router(name="main-menu")
 
@@ -32,6 +37,56 @@ def menu() -> InlineKeyboardMarkup:
 def is_owner(user_id: int | None) -> bool:
     settings = get_settings()
     return bool(user_id and settings.telegram_owner_id and user_id == settings.telegram_owner_id)
+
+
+async def ensure_primary_server() -> None:
+    settings = get_settings()
+    if not settings.server_config_encryption_key:
+        logging.warning("Primary server was not registered: SERVER_CONFIG_ENCRYPTION_KEY is missing")
+        return
+    try:
+        password = _read_wdtt_password()
+        encrypted = encrypt_server_config({
+            "wrap_a_password": password,
+            "source": "existing-production-node",
+            "registered_at": datetime.now(UTC).isoformat(),
+        })
+        async with SessionLocal() as session:
+            node = await session.scalar(
+                select(ServerNode).where(
+                    ServerNode.host == settings.wdtt_public_host,
+                    ServerNode.archived_at.is_(None),
+                )
+            )
+            if node is None:
+                node = ServerNode(
+                    name="Основной сервер",
+                    host=settings.wdtt_public_host,
+                    port=settings.wdtt_public_port,
+                    protocol_mode=settings.wdtt_mode,
+                    encrypted_config=encrypted,
+                    mtu=settings.wdtt_mtu,
+                    dns=settings.wdtt_dns,
+                    balanced_connections=settings.wdtt_connections_balanced,
+                    max_connections=settings.wdtt_connections_maximum,
+                    published=True,
+                    auto_select=True,
+                    maintenance=False,
+                )
+                session.add(node)
+                await session.flush()
+                session.add(ServerHealth(server_id=node.id, online=True))
+            else:
+                node.name = node.name or "Основной сервер"
+                node.port = settings.wdtt_public_port
+                node.protocol_mode = settings.wdtt_mode
+                node.encrypted_config = encrypted
+                node.published = True
+                node.auto_select = True
+                node.maintenance = False
+            await session.commit()
+    except Exception:
+        logging.exception("Failed to auto-register primary WDTT server")
 
 
 @menu_router.message(CommandStart())
@@ -70,6 +125,7 @@ async def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     await init_db()
+    await ensure_primary_server()
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
