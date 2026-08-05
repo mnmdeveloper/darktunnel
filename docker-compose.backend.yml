@@ -13,6 +13,21 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
 
+  vkturn:
+    build: ./vkturn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    ports:
+      - "56100:56100/tcp"
+      - "56100:56100/udp"
+    volumes:
+      - darktunnel_vkturn:/data
+
   api:
     build: ./backend
     restart: unless-stopped
@@ -29,10 +44,12 @@ services:
     build: ./backend
     restart: unless-stopped
     command: ["python", "-m", "app.bot_entry"]
+    network_mode: "service:vkturn"
     env_file: ./backend/.env
     depends_on:
       - db
       - redis
+      - vkturn
     volumes:
       - /etc/wdtt:/host/etc/wdtt:ro
 
@@ -54,3 +71,4 @@ volumes:
   darktunnel_postgres:
   darktunnel_caddy_data:
   darktunnel_caddy_config:
+  darktunnel_vkturn:
