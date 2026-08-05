@@ -1,18 +1,30 @@
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
+from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import func, select
 
 from .config import get_settings
 from .db import SessionLocal, init_db
-from .models import Activation, User
+from .models import Activation, AuditLog, Device, User, UserStatus
 from .schemas import ActivationCreate
 from .services import create_activation
 
 router = Router()
+PAGE_SIZE = 8
+
+
+class LinkWizard(StatesGroup):
+    duration = State()
+    devices = State()
+    ttl = State()
+    note = State()
 
 
 def owner_only(user_id: int | None) -> bool:
@@ -20,99 +32,450 @@ def owner_only(user_id: int | None) -> bool:
     return bool(user_id and settings.telegram_owner_id and user_id == settings.telegram_owner_id)
 
 
+def button(text: str, data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=data)
+
+
 def main_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Статус", callback_data="status")],
-            [InlineKeyboardButton(text="🔑 Ссылка на 3 дня", callback_data="create:3")],
-            [InlineKeyboardButton(text="🔑 Ссылка на 30 дней", callback_data="create:30")],
-            [InlineKeyboardButton(text="👥 Пользователи", callback_data="users")],
-            [InlineKeyboardButton(text="🖥 Сервер", callback_data="server")],
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [button("📊 Статистика", "stats"), button("🖥 Сервер", "server")],
+        [button("🔑 Доступ и ссылки", "access"), button("👥 Пользователи", "users:0")],
+        [button("🧾 Журнал действий", "audit:0"), button("⚙️ Настройки", "settings")],
+    ])
 
 
-async def reject(callback: CallbackQuery) -> bool:
+def back_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[button("⬅️ Главное меню", "home")]])
+
+
+def access_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [button("➕ Создать ссылку", "link:new")],
+        [button("⚡ 3 дня", "link:quick:3"), button("⚡ 30 дней", "link:quick:30")],
+        [button("📋 Последние ссылки", "links:0")],
+        [button("⬅️ Главное меню", "home")],
+    ])
+
+
+async def reject_callback(callback: CallbackQuery) -> bool:
     if owner_only(callback.from_user.id):
         return False
     await callback.answer("Доступ запрещён", show_alert=True)
     return True
 
 
-@router.message(CommandStart())
-async def start(message: Message) -> None:
-    if not owner_only(message.from_user.id if message.from_user else None):
-        await message.answer("Доступ запрещён.")
-        return
-    await message.answer("DarkTunnel Admin", reply_markup=main_menu())
+async def reject_message(message: Message) -> bool:
+    if owner_only(message.from_user.id if message.from_user else None):
+        return False
+    await message.answer("Доступ запрещён.")
+    return True
 
 
-@router.callback_query(F.data == "status")
-async def status(callback: CallbackQuery) -> None:
-    if await reject(callback):
-        return
-    settings = get_settings()
-    async with SessionLocal() as session:
-        users = int(await session.scalar(select(func.count(User.id))) or 0)
-        links = int(await session.scalar(select(func.count(Activation.id))) or 0)
-    await callback.message.edit_text(
-        f"Backend: работает\nПользователей: {users}\nСсылок: {links}\nWDTT: {settings.wdtt_public_host}:{settings.wdtt_public_port}",
-        reply_markup=main_menu(),
-    )
+async def edit(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup, parse_mode: str | None = "HTML") -> None:
+    if callback.message:
+        await callback.message.edit_text(text, reply_markup=markup, parse_mode=parse_mode)
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("create:"))
-async def create_link(callback: CallbackQuery) -> None:
-    if await reject(callback):
-        return
-    days = int(callback.data.split(":", 1)[1])
+async def audit(admin_id: int, action: str, entity_type: str, entity_id: str, result: str = "success") -> None:
     async with SessionLocal() as session:
-        activation, token = await create_activation(
-            session,
-            ActivationCreate(
-                duration_days=days,
-                max_devices=1,
-                max_uses=1,
-                link_ttl_hours=72,
-                created_by=callback.from_user.id,
-            ),
-        )
+        session.add(AuditLog(admin_id=admin_id, action=action, entity_type=entity_type, entity_id=entity_id, result=result))
+        await session.commit()
+
+
+@router.message(CommandStart())
+@router.message(Command("menu"))
+async def start(message: Message, state: FSMContext) -> None:
+    if await reject_message(message):
+        return
+    await state.clear()
+    await message.answer(
+        "<b>DarkTunnel Admin</b>\n\nУправление доступом, пользователями и сервером.",
+        reply_markup=main_menu(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "home")
+async def home(callback: CallbackQuery, state: FSMContext) -> None:
+    if await reject_callback(callback):
+        return
+    await state.clear()
+    await edit(callback, "<b>DarkTunnel Admin</b>\n\nВыберите раздел:", main_menu())
+
+
+@router.callback_query(F.data == "stats")
+async def stats(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    now = datetime.now(UTC)
+    async with SessionLocal() as session:
+        users = int(await session.scalar(select(func.count(User.id))) or 0)
+        active = int(await session.scalar(select(func.count(User.id)).where(User.status == UserStatus.active, User.subscription_expires_at > now)) or 0)
+        blocked = int(await session.scalar(select(func.count(User.id)).where(User.status == UserStatus.blocked)) or 0)
+        devices = int(await session.scalar(select(func.count(Device.id)).where(Device.revoked_at.is_(None))) or 0)
+        links = int(await session.scalar(select(func.count(Activation.id))) or 0)
+        unused = int(await session.scalar(select(func.count(Activation.id)).where(Activation.uses == 0, Activation.revoked_at.is_(None), Activation.link_expires_at > now)) or 0)
+    text = (
+        "<b>📊 Статистика</b>\n\n"
+        f"👥 Всего пользователей: <b>{users}</b>\n"
+        f"✅ Активных подписок: <b>{active}</b>\n"
+        f"⛔️ Заблокировано: <b>{blocked}</b>\n"
+        f"📱 Активных устройств: <b>{devices}</b>\n"
+        f"🔑 Создано ссылок: <b>{links}</b>\n"
+        f"🆕 Неиспользованных ссылок: <b>{unused}</b>"
+    )
+    await edit(callback, text, back_menu())
+
+
+@router.callback_query(F.data == "access")
+async def access(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    await edit(callback, "<b>🔑 Доступ и ссылки</b>\n\nСоздавайте и отзывайте ссылки активации.", access_menu())
+
+
+async def send_activation(callback: CallbackQuery, days: int, devices: int = 1, ttl: int = 72, note: str = "") -> None:
+    async with SessionLocal() as session:
+        activation, token = await create_activation(session, ActivationCreate(
+            duration_days=days,
+            max_devices=devices,
+            max_uses=devices,
+            link_ttl_hours=ttl,
+            note=note,
+            created_by=callback.from_user.id,
+        ))
+    link = f"darktunnel://activate?d={token}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [button("❌ Отозвать ссылку", f"link:revoke:{activation.id}")],
+        [button("⬅️ К ссылкам", "access")],
+    ])
     await callback.message.answer(
-        f"Ссылка на {days} дней, действует 72 часа:\n\n<code>darktunnel://activate?d={token}</code>",
+        "<b>✅ Ссылка создана</b>\n\n"
+        f"Подписка: <b>{days} дн.</b>\n"
+        f"Устройства: <b>{devices}</b>\n"
+        f"Ссылка действует: <b>{ttl} ч.</b>\n\n"
+        f"<code>{escape(link)}</code>",
+        reply_markup=kb,
         parse_mode="HTML",
     )
     await callback.answer("Ссылка создана")
 
 
-@router.callback_query(F.data == "users")
-async def users(callback: CallbackQuery) -> None:
-    if await reject(callback):
+@router.callback_query(F.data.startswith("link:quick:"))
+async def quick_link(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
         return
+    days = int(callback.data.rsplit(":", 1)[1])
+    await send_activation(callback, days)
+
+
+@router.callback_query(F.data == "link:new")
+async def wizard_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if await reject_callback(callback):
+        return
+    await state.clear()
+    await state.set_state(LinkWizard.duration)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [button("3", "wiz:days:3"), button("7", "wiz:days:7"), button("14", "wiz:days:14")],
+        [button("30", "wiz:days:30"), button("90", "wiz:days:90"), button("365", "wiz:days:365")],
+        [button("❌ Отмена", "access")],
+    ])
+    await edit(callback, "<b>Новая ссылка · шаг 1/4</b>\n\nВыберите срок подписки в днях:", kb)
+
+
+@router.callback_query(LinkWizard.duration, F.data.startswith("wiz:days:"))
+async def wizard_days(callback: CallbackQuery, state: FSMContext) -> None:
+    days = int(callback.data.rsplit(":", 1)[1])
+    await state.update_data(days=days)
+    await state.set_state(LinkWizard.devices)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [button("1 устройство", "wiz:devices:1")],
+        [button("2 устройства", "wiz:devices:2")],
+        [button("3 устройства", "wiz:devices:3")],
+        [button("❌ Отмена", "access")],
+    ])
+    await edit(callback, "<b>Новая ссылка · шаг 2/4</b>\n\nСколько устройств разрешить?", kb)
+
+
+@router.callback_query(LinkWizard.devices, F.data.startswith("wiz:devices:"))
+async def wizard_devices(callback: CallbackQuery, state: FSMContext) -> None:
+    devices = int(callback.data.rsplit(":", 1)[1])
+    await state.update_data(devices=devices)
+    await state.set_state(LinkWizard.ttl)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [button("24 часа", "wiz:ttl:24"), button("72 часа", "wiz:ttl:72")],
+        [button("7 дней", "wiz:ttl:168"), button("30 дней", "wiz:ttl:720")],
+        [button("❌ Отмена", "access")],
+    ])
+    await edit(callback, "<b>Новая ссылка · шаг 3/4</b>\n\nСколько действует неактивированная ссылка?", kb)
+
+
+@router.callback_query(LinkWizard.ttl, F.data.startswith("wiz:ttl:"))
+async def wizard_ttl(callback: CallbackQuery, state: FSMContext) -> None:
+    ttl = int(callback.data.rsplit(":", 1)[1])
+    await state.update_data(ttl=ttl)
+    await state.set_state(LinkWizard.note)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[button("Без заметки", "wiz:note:skip")], [button("❌ Отмена", "access")]])
+    await edit(callback, "<b>Новая ссылка · шаг 4/4</b>\n\nОтправьте заметку для себя одним сообщением или нажмите «Без заметки».", kb)
+
+
+@router.callback_query(LinkWizard.note, F.data == "wiz:note:skip")
+async def wizard_skip_note(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    await send_activation(callback, data["days"], data["devices"], data["ttl"])
+
+
+@router.message(LinkWizard.note)
+async def wizard_note(message: Message, state: FSMContext) -> None:
+    if await reject_message(message):
+        return
+    data = await state.get_data()
+    note = (message.text or "")[:500]
+    await state.clear()
     async with SessionLocal() as session:
-        rows = (await session.execute(select(User).order_by(User.created_at.desc()).limit(10))).scalars().all()
-    if not rows:
-        text = "Пользователей пока нет."
-    else:
-        text = "Последние пользователи:\n" + "\n".join(
-            f"• {str(row.id)[:8]} — {row.status.value} — до {row.subscription_expires_at:%d.%m.%Y}"
-            for row in rows
-            if row.subscription_expires_at is not None
-        )
-    await callback.message.edit_text(text, reply_markup=main_menu())
-    await callback.answer()
+        activation, token = await create_activation(session, ActivationCreate(
+            duration_days=data["days"], max_devices=data["devices"], max_uses=data["devices"],
+            link_ttl_hours=data["ttl"], note=note, created_by=message.from_user.id,
+        ))
+    link = f"darktunnel://activate?d={token}"
+    await message.answer(
+        f"<b>✅ Ссылка создана</b>\n\nЗаметка: {escape(note)}\n\n<code>{escape(link)}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button("❌ Отозвать", f"link:revoke:{activation.id}")], [button("⬅️ Меню", "home")]]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("links:"))
+async def links(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    page = max(0, int(callback.data.split(":")[1]))
+    async with SessionLocal() as session:
+        total = int(await session.scalar(select(func.count(Activation.id))) or 0)
+        rows = (await session.execute(select(Activation).order_by(Activation.created_at.desc()).offset(page * PAGE_SIZE).limit(PAGE_SIZE))).scalars().all()
+    keyboard = []
+    now = datetime.now(UTC)
+    for row in rows:
+        if row.revoked_at:
+            icon = "❌"
+        elif row.link_expires_at <= now:
+            icon = "⌛️"
+        elif row.uses >= row.max_uses:
+            icon = "✅"
+        else:
+            icon = "🆕"
+        keyboard.append([button(f"{icon} {row.duration_days} дн. · {row.uses}/{row.max_uses} · {str(row.id)[:8]}", f"link:view:{row.id}")])
+    nav = []
+    if page > 0: nav.append(button("◀️", f"links:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total: nav.append(button("▶️", f"links:{page+1}"))
+    if nav: keyboard.append(nav)
+    keyboard.append([button("⬅️ К доступу", "access")])
+    await edit(callback, f"<b>📋 Ссылки</b>\n\nВсего: {total} · страница {page + 1}", InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@router.callback_query(F.data.startswith("link:view:"))
+async def link_view(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    activation_id = callback.data.split(":", 2)[2]
+    async with SessionLocal() as session:
+        row = await session.get(Activation, activation_id)
+    if row is None:
+        await callback.answer("Ссылка не найдена", show_alert=True)
+        return
+    status = "отозвана" if row.revoked_at else ("истекла" if row.link_expires_at <= datetime.now(UTC) else "активна")
+    text = (
+        f"<b>🔑 Ссылка {str(row.id)[:8]}</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
+        f"Подписка: <b>{row.duration_days} дн.</b>\n"
+        f"Использования: <b>{row.uses}/{row.max_uses}</b>\n"
+        f"Устройств: <b>{row.max_devices}</b>\n"
+        f"Истекает: <b>{row.link_expires_at:%d.%m.%Y %H:%M}</b>\n"
+        f"Заметка: {escape(row.note or '—')}"
+    )
+    rows = []
+    if row.revoked_at is None:
+        rows.append([button("❌ Отозвать", f"link:revoke:{row.id}")])
+    rows += [[button("⬅️ К списку", "links:0")]]
+    await edit(callback, text, InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("link:revoke:"))
+async def revoke_link(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    activation_id = callback.data.split(":", 2)[2]
+    async with SessionLocal() as session:
+        row = await session.get(Activation, activation_id)
+        if row is None:
+            await callback.answer("Ссылка не найдена", show_alert=True)
+            return
+        row.revoked_at = datetime.now(UTC)
+        session.add(AuditLog(admin_id=callback.from_user.id, action="activation.revoke", entity_type="activation", entity_id=str(row.id)))
+        await session.commit()
+    await callback.answer("Ссылка отозвана", show_alert=True)
+    await access(callback)
+
+
+@router.callback_query(F.data.startswith("users:"))
+async def users(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    page = max(0, int(callback.data.split(":")[1]))
+    async with SessionLocal() as session:
+        total = int(await session.scalar(select(func.count(User.id))) or 0)
+        rows = (await session.execute(select(User).order_by(User.created_at.desc()).offset(page * PAGE_SIZE).limit(PAGE_SIZE))).scalars().all()
+    keyboard = []
+    now = datetime.now(UTC)
+    for row in rows:
+        icon = "⛔️" if row.status == UserStatus.blocked else ("✅" if row.lifetime or (row.subscription_expires_at and row.subscription_expires_at > now) else "⌛️")
+        expiry = "∞" if row.lifetime else (row.subscription_expires_at.strftime("%d.%m.%y") if row.subscription_expires_at else "—")
+        keyboard.append([button(f"{icon} {str(row.id)[:8]} · до {expiry}", f"user:view:{row.id}")])
+    nav = []
+    if page > 0: nav.append(button("◀️", f"users:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total: nav.append(button("▶️", f"users:{page+1}"))
+    if nav: keyboard.append(nav)
+    keyboard.append([button("⬅️ Главное меню", "home")])
+    await edit(callback, f"<b>👥 Пользователи</b>\n\nВсего: {total} · страница {page + 1}", InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@router.callback_query(F.data.startswith("user:view:"))
+async def user_view(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    user_id = callback.data.split(":", 2)[2]
+    async with SessionLocal() as session:
+        row = await session.get(User, user_id)
+        devices = (await session.execute(select(Device).where(Device.user_id == user_id).order_by(Device.created_at.desc()))).scalars().all()
+    if row is None:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    expiry = "Бессрочно" if row.lifetime else (row.subscription_expires_at.strftime("%d.%m.%Y %H:%M") if row.subscription_expires_at else "—")
+    active_devices = sum(1 for d in devices if d.revoked_at is None)
+    text = (
+        f"<b>👤 Пользователь {str(row.id)[:8]}</b>\n\n"
+        f"Статус: <b>{row.status.value}</b>\n"
+        f"Подписка до: <b>{expiry}</b>\n"
+        f"Устройств: <b>{active_devices}/{len(devices)}</b>\n"
+        f"Telegram ID: <code>{row.telegram_id or '—'}</code>\n"
+        f"Заметка: {escape(row.note or '—')}"
+    )
+    keyboard = [
+        [button("➕ 7 дней", f"user:add7:{row.id}"), button("➕ 30 дней", f"user:add30:{row.id}")],
+        [button("📱 Сбросить устройства", f"user:reset:{row.id}")],
+        [button("✅ Разблокировать" if row.status == UserStatus.blocked else "⛔️ Заблокировать", f"user:toggle:{row.id}")],
+        [button("⬅️ К пользователям", "users:0")],
+    ]
+    await edit(callback, text, InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@router.callback_query(F.data.startswith("user:add"))
+async def user_extend(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    action, user_id = callback.data.split(":")[1:]
+    days = 7 if action == "add7" else 30
+    async with SessionLocal() as session:
+        row = await session.get(User, user_id)
+        if row is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        base = row.subscription_expires_at if row.subscription_expires_at and row.subscription_expires_at > datetime.now(UTC) else datetime.now(UTC)
+        row.subscription_expires_at = base + timedelta(days=days)
+        session.add(AuditLog(admin_id=callback.from_user.id, action=f"user.extend.{days}", entity_type="user", entity_id=str(row.id)))
+        await session.commit()
+    await callback.answer(f"Добавлено {days} дней", show_alert=True)
+    callback.data = f"user:view:{user_id}"
+    await user_view(callback)
+
+
+@router.callback_query(F.data.startswith("user:toggle:"))
+async def user_toggle(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    user_id = callback.data.split(":", 2)[2]
+    async with SessionLocal() as session:
+        row = await session.get(User, user_id)
+        if row is None:
+            await callback.answer("Пользователь не найден", show_alert=True)
+            return
+        row.status = UserStatus.active if row.status == UserStatus.blocked else UserStatus.blocked
+        session.add(AuditLog(admin_id=callback.from_user.id, action=f"user.{row.status.value}", entity_type="user", entity_id=str(row.id)))
+        await session.commit()
+    await callback.answer("Статус изменён", show_alert=True)
+    callback.data = f"user:view:{user_id}"
+    await user_view(callback)
+
+
+@router.callback_query(F.data.startswith("user:reset:"))
+async def user_reset(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    user_id = callback.data.split(":", 2)[2]
+    async with SessionLocal() as session:
+        devices = (await session.execute(select(Device).where(Device.user_id == user_id, Device.revoked_at.is_(None)))).scalars().all()
+        now = datetime.now(UTC)
+        for device in devices:
+            device.revoked_at = now
+        session.add(AuditLog(admin_id=callback.from_user.id, action="user.devices.reset", entity_type="user", entity_id=user_id))
+        await session.commit()
+    await callback.answer(f"Сброшено устройств: {len(devices)}", show_alert=True)
+    callback.data = f"user:view:{user_id}"
+    await user_view(callback)
 
 
 @router.callback_query(F.data == "server")
 async def server(callback: CallbackQuery) -> None:
-    if await reject(callback):
+    if await reject_callback(callback):
         return
     settings = get_settings()
-    await callback.message.edit_text(
-        f"WDTT сервер\n{settings.wdtt_public_host}:{settings.wdtt_public_port}\nРежим: {settings.wdtt_mode}\nСоединения: {settings.wdtt_connections_balanced}/{settings.wdtt_connections_maximum}",
-        reply_markup=main_menu(),
+    text = (
+        "<b>🖥 Сервер DarkTunnel</b>\n\n"
+        "API: <b>online</b>\n"
+        f"Публичный API: <code>{escape(settings.public_api_url)}</code>\n"
+        f"WDTT: <code>{settings.wdtt_public_host}:{settings.wdtt_public_port}</code>\n"
+        f"Режим: <b>{escape(settings.wdtt_mode)}</b>\n"
+        f"Соединения: <b>{settings.wdtt_connections_balanced}/{settings.wdtt_connections_maximum}</b>\n"
+        f"MTU: <b>{settings.wdtt_mtu}</b> · DNS: <b>{escape(settings.wdtt_dns)}</b>"
     )
-    await callback.answer()
+    await edit(callback, text, InlineKeyboardMarkup(inline_keyboard=[[button("🔄 Обновить", "server")], [button("⬅️ Главное меню", "home")]]))
+
+
+@router.callback_query(F.data.startswith("audit:"))
+async def audit_list(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    page = max(0, int(callback.data.split(":")[1]))
+    async with SessionLocal() as session:
+        total = int(await session.scalar(select(func.count(AuditLog.id))) or 0)
+        rows = (await session.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).offset(page * PAGE_SIZE).limit(PAGE_SIZE))).scalars().all()
+    lines = ["<b>🧾 Журнал действий</b>", ""]
+    for row in rows:
+        lines.append(f"• <b>{escape(row.action)}</b> · {escape(row.entity_type)} <code>{escape(row.entity_id[:8])}</code> · {row.created_at:%d.%m %H:%M}")
+    keyboard = []
+    nav = []
+    if page > 0: nav.append(button("◀️", f"audit:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total: nav.append(button("▶️", f"audit:{page+1}"))
+    if nav: keyboard.append(nav)
+    keyboard.append([button("⬅️ Главное меню", "home")])
+    await edit(callback, "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+
+@router.callback_query(F.data == "settings")
+async def settings(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    text = (
+        "<b>⚙️ Настройки</b>\n\n"
+        "🔒 Доступ: только Owner ID\n"
+        "🔑 Выдача: ручная\n"
+        "💳 Продажи: выключены\n"
+        "🤖 Режим бота: long polling\n\n"
+        "Токены и WDTT-пароль в Telegram не отображаются."
+    )
+    await edit(callback, text, back_menu())
 
 
 async def main() -> None:
@@ -129,7 +492,7 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
-    await dispatcher.start_polling(bot)
+    await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
 if __name__ == "__main__":
