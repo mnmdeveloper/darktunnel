@@ -1,8 +1,8 @@
 FROM golang:1.25-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
-RUN git clone --depth=1 https://github.com/anton48/vk-turn-proxy.git .
-RUN go build -o /out/vk-turn-proxy .
+RUN git clone --depth=1 --branch add-server-srtp-layer https://github.com/anton48/vk-turn-proxy.git .
+RUN go build -o /out/vk-turn-proxy ./server
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates iproute2 iptables wireguard-tools
