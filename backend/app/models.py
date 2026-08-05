@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +60,57 @@ class Activation(Base):
     created_by: Mapped[int] = mapped_column(BigInteger)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ServerNode(Base):
+    __tablename__ = "servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    country_code: Mapped[str] = mapped_column(String(8), default="")
+    country_name: Mapped[str] = mapped_column(String(128), default="")
+    city: Mapped[str] = mapped_column(String(128), default="")
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    map_span_lat: Mapped[float] = mapped_column(Float, default=0.12)
+    map_span_lon: Mapped[float] = mapped_column(Float, default=0.12)
+    host: Mapped[str] = mapped_column(String(253), index=True)
+    port: Mapped[int] = mapped_column(Integer, default=56000)
+    protocol_mode: Mapped[str] = mapped_column(String(64), default="srtp-wrap-a")
+    encrypted_config: Mapped[str] = mapped_column(Text)
+    mtu: Mapped[int] = mapped_column(Integer, default=1280)
+    dns: Mapped[str] = mapped_column(String(128), default="1.1.1.1")
+    balanced_connections: Mapped[int] = mapped_column(Integer, default=3)
+    max_connections: Mapped[int] = mapped_column(Integer, default=10)
+    max_users: Mapped[int] = mapped_column(Integer, default=0)
+    published: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_select: Mapped[bool] = mapped_column(Boolean, default=True)
+    maintenance: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    health: Mapped[list["ServerHealth"]] = relationship(back_populates="server", cascade="all, delete-orphan")
+
+
+class ServerHealth(Base):
+    __tablename__ = "server_health"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    server_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    online: Mapped[bool] = mapped_column(Boolean, default=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    load_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    active_users: Mapped[int] = mapped_column(Integer, default=0)
+    active_connections: Mapped[int] = mapped_column(Integer, default=0)
+    rx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    tx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    uptime_seconds: Mapped[int] = mapped_column(BigInteger, default=0)
+    version: Mapped[str] = mapped_column(String(64), default="")
+    error_code: Mapped[str] = mapped_column(String(128), default="")
+
+    server: Mapped[ServerNode] = relationship(back_populates="health")
 
 
 class AuditLog(Base):
