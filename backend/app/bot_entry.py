@@ -11,6 +11,7 @@ from sqlalchemy import select
 from .bot import router as legacy_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
+from .bot_servers_v2 import router as servers_v2_router
 from .bot_vkturn_fixups import router as vkturn_fixups_router
 from .bot_vkturn_v2 import router as vkturn_router, sync_peers_forever
 from .config import get_settings
@@ -124,6 +125,7 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
+    dispatcher.include_router(servers_v2_router)
     dispatcher.include_router(vkturn_fixups_router)
     dispatcher.include_router(vkturn_router)
     dispatcher.include_router(management_router)
