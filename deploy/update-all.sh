@@ -11,6 +11,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$BACKUP_ROOT/$STAMP"
 OLD_COMMIT=""
 NEW_COMMIT=""
+FAILED_COMMAND=""
+FAILED_LINE=""
 
 log() { printf '[DarkTunnel] %s\n' "$*"; }
 fail() { printf '[DarkTunnel] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -54,6 +56,7 @@ restore_config() {
 rollback() {
   local code=$?
   trap - ERR
+  [ -n "$FAILED_LINE" ] && log "Failed at line $FAILED_LINE: $FAILED_COMMAND (exit $code)"
   log "Update failed; restoring previous application revision"
   if [ -n "$OLD_COMMIT" ] && [ -d "$APP_DIR/.git" ]; then
     git -C "$APP_DIR" reset --hard "$OLD_COMMIT" || true
@@ -64,15 +67,16 @@ rollback() {
   log "Host WDTT/VK Turn/AWG services and configs were not modified"
   exit "$code"
 }
-trap rollback ERR
+trap 'FAILED_LINE=$LINENO; FAILED_COMMAND=$BASH_COMMAND' ERR
+trap rollback EXIT
 
 backup_state
 
 if [ -d "$APP_DIR/.git" ]; then
   git config --global --add safe.directory "$APP_DIR" >/dev/null 2>&1 || true
   git -C "$APP_DIR" remote set-url origin "$REPO"
-  git -C "$APP_DIR" fetch --prune origin "$BRANCH"
-  git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  git -C "$APP_DIR" fetch --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+  git -C "$APP_DIR" reset --hard "refs/remotes/origin/$BRANCH"
   git -C "$APP_DIR" clean -fdx -e .env -e backend/.env -e Caddyfile
 else
   install -d "$(dirname "$APP_DIR")"
@@ -101,6 +105,7 @@ for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
     compose ps db redis api bot caddy
     trap - ERR
+    trap - EXIT
     log "Full central server update completed: $NEW_COMMIT"
     log "Backup: $BACKUP_DIR"
     log "Activation links remain darktunnel://activate?d=TOKEN"
