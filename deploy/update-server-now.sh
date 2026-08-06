@@ -10,14 +10,25 @@ log() { printf '[DarkTunnel] %s\n' "$*"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-else
-  echo "Docker Compose is required" >&2
-  exit 1
-fi
+ensure_compose_v2() {
+  if docker compose version >/dev/null 2>&1; then
+    return
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+    apt-get install -y docker-compose-v2
+  elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
+    apt-get install -y docker-compose-plugin
+  else
+    echo "Docker Compose v2 package is unavailable" >&2
+    exit 1
+  fi
+  docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 installation failed" >&2; exit 1; }
+}
+
+ensure_compose_v2
+COMPOSE=(docker compose)
 
 compose() {
   "${COMPOSE[@]}" --env-file "$APP_DIR/.env" -f "$COMPOSE_FILE" "$@"
@@ -41,8 +52,15 @@ compose up -d db redis
 log "Building API and bot"
 compose build --no-cache api bot
 
-log "Restarting API, bot and Caddy"
-compose up -d --force-recreate --no-deps api bot caddy
+log "Removing stale application containers"
+for service in api bot caddy; do
+  ids="$(docker ps -aq --filter "label=com.docker.compose.project=darktunnel" --filter "label=com.docker.compose.service=$service")"
+  [ -z "$ids" ] || docker rm -f $ids
+
+done
+
+log "Starting API, bot and Caddy"
+compose up -d --no-deps api bot caddy
 
 sleep 8
 
