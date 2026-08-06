@@ -6,7 +6,6 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
-from .activation_links import public_activation_link
 from .config import get_settings
 from .db import SessionLocal
 from .models import Activation
@@ -47,7 +46,7 @@ async def access(callback: CallbackQuery) -> None:
         return
     if callback.message:
         await callback.message.edit_text(
-            "<b>🔑 Доступ</b>\n\nВыбери срок. Бот создаст одну обычную HTTPS-ссылку. Пользователь нажимает её — приложение открывается и загружает настройки автоматически.",
+            "<b>🔑 Доступ</b>\n\nВыбери срок. Бот создаст одну ссылку, которую пользователь открывает в DarkTunnel.",
             reply_markup=menu(),
             parse_mode="HTML",
         )
@@ -71,19 +70,17 @@ async def create_link(callback: CallbackQuery) -> None:
                 created_by=callback.from_user.id,
             ),
         )
-    link = public_activation_link(token)
+    link = f"darktunnel://activate?d={token}"
     if callback.message:
         await callback.message.answer(
             "<b>✅ Готово</b>\n\n"
-            f"Срок: <b>{days} дней</b>\n"
-            "Пользователю нужно только нажать ссылку:\n\n"
-            f"{escape(link)}",
+            f"Срок: <b>{days} дней</b>\n\n"
+            f"<code>{escape(link)}</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [b("❌ Отозвать", f"access2:revoke:{activation.id}")],
                 [b("🔑 Создать ещё", "access")],
             ]),
             parse_mode="HTML",
-            disable_web_page_preview=True,
         )
     await callback.answer("Ссылка создана")
 
