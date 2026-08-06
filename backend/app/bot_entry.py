@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 
 from .bot import router as legacy_router
+from .bot_access_v2 import router as access_v2_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
 from .bot_servers_v2 import router as servers_v2_router
@@ -29,13 +30,10 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [button("📊 Статистика", "stats"), button("👥 Пользователи", "users:0")],
-        [button("🔑 DarkTurn ссылки", "access"), button("📡 VK Turn", "vkturn")],
-        [button("🖥 Серверы", "servers"), button("💳 Продажи", "sales")],
-        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcements")],
-        [button("🚨 Техработы", "maintenance"), button("📲 Push", "push")],
-        [button("👮 Администраторы", "admins"), button("🧾 Журнал", "audit:0")],
-        [button("⚙️ Настройки", "settings")],
+        [button("🔑 Создать ссылку", "access")],
+        [button("👥 Пользователи", "users:0"), button("🖥 Серверы", "servers")],
+        [button("📊 Статистика", "stats"), button("📡 VK Turn", "vkturn")],
+        [button("⚙️ Остальное", "settings")],
     ])
 
 
@@ -96,7 +94,11 @@ async def start(message: Message, state: FSMContext) -> None:
         await message.answer("Доступ запрещён.")
         return
     await state.clear()
-    await message.answer("<b>DarkTunnel Admin</b>\n\nDarkTurn и VK Turn управляются отдельно.", reply_markup=menu(), parse_mode="HTML")
+    await message.answer(
+        "<b>DarkTunnel Admin</b>\n\nГлавное действие — создать одну ссылку для пользователя.",
+        reply_markup=menu(),
+        parse_mode="HTML",
+    )
 
 
 @menu_router.callback_query(F.data == "home")
@@ -106,7 +108,11 @@ async def home(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     if callback.message:
-        await callback.message.edit_text("<b>DarkTunnel Admin</b>\n\nВыберите раздел:", reply_markup=menu(), parse_mode="HTML")
+        await callback.message.edit_text(
+            "<b>DarkTunnel Admin</b>\n\nВыберите действие:",
+            reply_markup=menu(),
+            parse_mode="HTML",
+        )
     await callback.answer()
 
 
@@ -125,6 +131,7 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
+    dispatcher.include_router(access_v2_router)
     dispatcher.include_router(servers_v2_router)
     dispatcher.include_router(vkturn_fixups_router)
     dispatcher.include_router(vkturn_router)
