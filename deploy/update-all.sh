@@ -16,27 +16,23 @@ log() { printf '[DarkTunnel] %s\n' "$*"; }
 fail() { printf '[DarkTunnel] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ "${EUID}" -eq 0 ] || fail "Run with sudo/root"
-for command in git curl docker tar; do
-  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
-done
+for command in git curl docker tar; do command -v "$command" >/dev/null 2>&1 || fail "$command is required"; done
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-else
-  fail "Docker Compose is required"
-fi
+if docker compose version >/dev/null 2>&1; then COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then COMPOSE=(docker-compose)
+else fail "Docker Compose is required"; fi
 
-compose() {
-  "${COMPOSE[@]}" --env-file "$APP_DIR/.env" -f "$APP_DIR/$COMPOSE_FILE" "$@"
-}
+compose() { "${COMPOSE[@]}" --env-file "$APP_DIR/.env" -f "$APP_DIR/$COMPOSE_FILE" "$@"; }
 
 backup_state() {
   install -m 700 -d "$BACKUP_DIR/config" "$BACKUP_DIR/vpn-snapshots"
   if [ -d "$APP_DIR/.git" ]; then
+    git config --global --add safe.directory "$APP_DIR" >/dev/null 2>&1 || true
     OLD_COMMIT="$(git -C "$APP_DIR" rev-parse HEAD)"
     printf '%s\n' "$OLD_COMMIT" > "$BACKUP_DIR/old-commit"
+    git -C "$APP_DIR" status --porcelain=v1 > "$BACKUP_DIR/git-status.txt" || true
+    git -C "$APP_DIR" diff --binary > "$BACKUP_DIR/local-changes.patch" || true
+    git -C "$APP_DIR" ls-files --others --exclude-standard -z | tar --null -T - -czf "$BACKUP_DIR/untracked-files.tar.gz" -C "$APP_DIR" 2>/dev/null || true
   fi
   [ -f "$APP_DIR/.env" ] && cp -a "$APP_DIR/.env" "$BACKUP_DIR/config/root.env"
   [ -f "$APP_DIR/backend/.env" ] && cp -a "$APP_DIR/backend/.env" "$BACKUP_DIR/config/backend.env"
@@ -73,8 +69,11 @@ trap rollback ERR
 backup_state
 
 if [ -d "$APP_DIR/.git" ]; then
+  git config --global --add safe.directory "$APP_DIR" >/dev/null 2>&1 || true
+  git -C "$APP_DIR" remote set-url origin "$REPO"
   git -C "$APP_DIR" fetch --prune origin "$BRANCH"
-  git -C "$APP_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
+  git -C "$APP_DIR" reset --hard "origin/$BRANCH"
+  git -C "$APP_DIR" clean -fdx -e .env -e backend/.env -e Caddyfile
 else
   install -d "$(dirname "$APP_DIR")"
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
@@ -90,13 +89,10 @@ restore_config
 compose config >/dev/null
 compose up -d db redis
 compose build api bot
-compose up -d --no-deps api
-compose up -d --no-deps bot
-compose up -d --no-deps caddy
+compose up -d --no-deps api bot caddy
 
 if systemctl list-unit-files darktunnel-node.service >/dev/null 2>&1; then
-  curl -fsSL "https://raw.githubusercontent.com/mnmdeveloper/darktunnel/$BRANCH/deploy/node-installer/install.sh" | \
-    DARKTUNNEL_BRANCH="$BRANCH" bash -s -- update
+  curl -fsSL "https://raw.githubusercontent.com/mnmdeveloper/darktunnel/$BRANCH/deploy/node-installer/install.sh" | DARKTUNNEL_BRANCH="$BRANCH" bash -s -- update
 fi
 
 for _ in $(seq 1 60); do
