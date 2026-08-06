@@ -13,7 +13,6 @@ import asyncssh
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .config import get_settings
 from .infrastructure_models import OnboardingStatus, ServerOnboardingJob, ServerTransport, TransportType
 from .models import AuditLog, ServerHealth, ServerNode
 from .server_crypto import encrypt_server_config
@@ -91,9 +90,6 @@ async def _run(connection: asyncssh.SSHClientConnection, command: str, password:
 
 
 async def install_and_discover(credentials: SSHCredentials, draft: ServerDraft, expected_fingerprint: str, branch: str = "server-onboarding-v2") -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.wdtt_vk_call_link:
-        raise RuntimeError("WDTT_VK_CALL_LINK не настроен на центральном сервере")
     async with await connect(credentials) as connection:
         if _fingerprint(connection.get_server_host_key()) != expected_fingerprint:
             raise RuntimeError("SSH fingerprint изменился. Установка остановлена")
@@ -103,7 +99,6 @@ async def install_and_discover(credentials: SSHCredentials, draft: ServerDraft, 
             f"DARKTUNNEL_COUNTRY={shlex.quote(draft.country)}",
             f"DARKTUNNEL_CITY={shlex.quote(draft.city)}",
             f"DARKTUNNEL_PUBLIC_HOST={shlex.quote(credentials.host)}",
-            f"DARKTUNNEL_VK_CALL_LINK={shlex.quote(settings.wdtt_vk_call_link)}",
             "DARKTUNNEL_AWG_PORT=585",
             "DARKTUNNEL_WDTT_PORT=56000",
         ])
