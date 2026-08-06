@@ -91,8 +91,10 @@ compose up -d db redis
 compose build api bot
 compose up -d --no-deps api bot caddy
 
-if systemctl list-unit-files darktunnel-node.service >/dev/null 2>&1; then
+if [ -f /etc/systemd/system/darktunnel-node.service ] && [ -s /etc/darktunnel-node/node.json ]; then
   curl -fsSL "https://raw.githubusercontent.com/mnmdeveloper/darktunnel/$BRANCH/deploy/node-installer/install.sh" | DARKTUNNEL_BRANCH="$BRANCH" bash -s -- update
+else
+  log "Node agent is not installed on the central server; skipping node update"
 fi
 
 for _ in $(seq 1 60); do
