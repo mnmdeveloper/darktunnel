@@ -19,18 +19,35 @@ fail() { printf '[DarkTunnel] ERROR: %s\n' "$*" >&2; exit 1; }
 [ "${EUID}" -eq 0 ] || fail "Run with sudo/root"
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 
+wait_for_apt() {
+  local waited=0
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    if [ "$waited" -ge 300 ]; then
+      ps -fp "$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null | awk '{print $1}')" >&2 || true
+      fail "apt/dpkg lock was not released within 5 minutes"
+    fi
+    [ $((waited % 15)) -ne 0 ] || log "Waiting for apt/dpkg lock (${waited}s)"
+    sleep 3
+    waited=$((waited + 3))
+  done
+}
+
 repair_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  wait_for_apt
   log "Checking dpkg/apt state"
   dpkg --configure -a
-  apt-get -f install -y
+  wait_for_apt
+  apt-get -o DPkg::Lock::Timeout=300 -f install -y
 }
 
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   repair_packages
-  apt-get update
-  apt-get install -y ca-certificates curl python3 iproute2 openssl
+  wait_for_apt
+  apt-get -o DPkg::Lock::Timeout=300 update
+  wait_for_apt
+  apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl python3 iproute2 openssl psmisc
   dpkg --audit || true
 }
 
@@ -93,7 +110,7 @@ run_installer() {
 }
 
 install_awg_if_missing() {
-  if command -v awg >/dev/null 2>&1 && find /etc/amnezia /etc/amneziawg /etc/wireguard -maxdepth 2 -name '*.conf' -print -quit 2>/dev/null | grep -q .; then
+  if command -v awg >/dev/null 2>&1 && find /etc/amnezia /etc/amneziawg /etc/wireguard -maxdepth 3 -name '*.conf' -print -quit 2>/dev/null | grep -q .; then
     log "Existing AmneziaWG detected; no changes made"
     return
   fi
@@ -137,7 +154,17 @@ ReadWritePaths=/run
 WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
-  systemctl enable --now darktunnel-node.service
+  systemctl enable darktunnel-node.service
+  systemctl restart darktunnel-node.service
+  for _ in $(seq 1 30); do
+    if systemctl is-active --quiet darktunnel-node.service && curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then
+      return
+    fi
+    sleep 1
+  done
+  systemctl status darktunnel-node.service --no-pager -l >&2 || true
+  journalctl -u darktunnel-node.service -n 100 --no-pager >&2 || true
+  fail "DarkTunnel node agent did not become ready within 30 seconds"
 }
 
 show_status() {
