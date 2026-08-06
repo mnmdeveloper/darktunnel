@@ -49,18 +49,34 @@ compose config >/dev/null
 log "Starting database and redis"
 compose up -d db redis
 
-log "Building API and bot"
-compose build --no-cache api bot
+log "Building VK Turn, API and bot"
+compose build --no-cache vkturn api bot
 
-log "Removing stale application containers"
-for service in api bot caddy; do
+log "Removing stale Compose v1 application containers"
+for service in api bot caddy vkturn; do
   ids="$(docker ps -aq --filter "label=com.docker.compose.project=darktunnel" --filter "label=com.docker.compose.service=$service")"
   [ -z "$ids" ] || docker rm -f $ids
-
 done
 
+log "Starting VK Turn first"
+compose up -d --no-deps vkturn
+
+for _ in $(seq 1 30); do
+  vkturn_id="$(compose ps -q vkturn 2>/dev/null || true)"
+  if [ -n "$vkturn_id" ] && [ "$(docker inspect -f '{{.State.Running}}' "$vkturn_id" 2>/dev/null || true)" = "true" ]; then
+    break
+  fi
+  sleep 1
+done
+
+vkturn_id="$(compose ps -q vkturn)"
+[ -n "$vkturn_id" ] || { echo "VK Turn container was not created" >&2; exit 1; }
+[ "$(docker inspect -f '{{.State.Running}}' "$vkturn_id")" = "true" ] || { docker logs --tail=200 "$vkturn_id"; exit 1; }
+
 log "Starting API, bot and Caddy"
-compose up -d --no-deps api bot caddy
+compose up -d --no-deps api
+compose up -d --no-deps bot
+compose up -d --no-deps caddy
 
 sleep 8
 
