@@ -10,28 +10,20 @@ log() { printf '[DarkTunnel] %s\n' "$*"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root" >&2; exit 1; }
 
-ensure_compose_v2() {
-  if docker compose version >/dev/null 2>&1; then
-    return
-  fi
+if ! docker compose version >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
     apt-get install -y docker-compose-v2
-  elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
-    apt-get install -y docker-compose-plugin
   else
-    echo "Docker Compose v2 package is unavailable" >&2
-    exit 1
+    apt-get install -y docker-compose-plugin
   fi
-  docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 installation failed" >&2; exit 1; }
-}
+fi
 
-ensure_compose_v2
-COMPOSE=(docker compose)
+docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 1; }
 
 compose() {
-  "${COMPOSE[@]}" --env-file "$APP_DIR/.env" -f "$COMPOSE_FILE" "$@"
+  docker compose --env-file "$APP_DIR/.env" -f "$COMPOSE_FILE" "$@"
 }
 
 log "Updating code"
@@ -43,55 +35,34 @@ git -C "$APP_DIR" reset --hard "refs/remotes/origin/$BRANCH"
 [ -s "$APP_DIR/.env" ] || { echo "Missing $APP_DIR/.env" >&2; exit 1; }
 [ -s "$APP_DIR/backend/.env" ] || { echo "Missing $APP_DIR/backend/.env" >&2; exit 1; }
 
-log "Validating compose"
 compose config >/dev/null
-
-log "Starting database and redis"
 compose up -d db redis
-
-log "Building VK Turn, API and bot"
 compose build --no-cache vkturn api bot
 
-log "Removing stale Compose v1 application containers"
-for service in api bot caddy vkturn; do
+log "Removing stale app containers"
+for service in bot vkturn api caddy; do
   ids="$(docker ps -aq --filter "label=com.docker.compose.project=darktunnel" --filter "label=com.docker.compose.service=$service")"
   [ -z "$ids" ] || docker rm -f $ids
 done
 
-log "Starting VK Turn first"
-compose up -d --no-deps vkturn
+log "Creating VK Turn and bot together"
+compose up -d --no-deps vkturn bot
 
-for _ in $(seq 1 30); do
-  vkturn_id="$(compose ps -q vkturn 2>/dev/null || true)"
-  if [ -n "$vkturn_id" ] && [ "$(docker inspect -f '{{.State.Running}}' "$vkturn_id" 2>/dev/null || true)" = "true" ]; then
-    break
-  fi
-  sleep 1
-done
+log "Starting API and Caddy"
+compose up -d --no-deps api caddy
 
-vkturn_id="$(compose ps -q vkturn)"
-[ -n "$vkturn_id" ] || { echo "VK Turn container was not created" >&2; exit 1; }
-[ "$(docker inspect -f '{{.State.Running}}' "$vkturn_id")" = "true" ] || { docker logs --tail=200 "$vkturn_id"; exit 1; }
-
-log "Starting API, bot and Caddy"
-compose up -d --no-deps api
-compose up -d --no-deps bot
-compose up -d --no-deps caddy
-
-sleep 8
-
-log "Container status"
+sleep 10
 compose ps
 
-log "API health"
 compose exec -T api python - <<'PY'
 import urllib.request
 print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())
 PY
 
-log "Bot process"
-bot_id="$(compose ps -q bot)"
-[ -n "$bot_id" ] || { echo "Bot container not found" >&2; exit 1; }
-[ "$(docker inspect -f '{{.State.Running}}' "$bot_id")" = "true" ] || { docker logs --tail=200 "$bot_id"; exit 1; }
+for service in vkturn bot api caddy; do
+  id="$(compose ps -q "$service")"
+  [ -n "$id" ] || { echo "$service container not found" >&2; exit 1; }
+  [ "$(docker inspect -f '{{.State.Running}}' "$id")" = "true" ] || { docker logs --tail=200 "$id"; exit 1; }
+done
 
 log "Update completed successfully"
