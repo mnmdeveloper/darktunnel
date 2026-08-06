@@ -24,12 +24,22 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg2 software-properties-common python3-launchpadlib iptables iproute2 linux-headers-"$(uname -r)"
+apt-get install -y ca-certificates curl gnupg2 software-properties-common python3 python3-launchpadlib iptables iproute2 linux-headers-"$(uname -r)"
+
+NETWORK="$(python3 - "$ADDRESS" <<'PY'
+import ipaddress, sys
+print(ipaddress.ip_interface(sys.argv[1]).network)
+PY
+)"
 
 KEYRING=/usr/share/keyrings/amnezia-archive-keyring.gpg
 if [ ! -s "$KEYRING" ]; then
+  GNUPGHOME="$(mktemp -d)"
+  export GNUPGHOME
+  trap 'rm -rf "$GNUPGHOME"' EXIT
   gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 75C9DD72C799870E310542E24166F2C257290828
   gpg --batch --export 75C9DD72C799870E310542E24166F2C257290828 > "$KEYRING"
+  chmod 0644 "$KEYRING"
 fi
 
 if [ "$ID" = ubuntu ]; then
@@ -72,8 +82,8 @@ H1 = $H1
 H2 = $H2
 H3 = $H3
 H4 = $H4
-PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -C POSTROUTING -s ${ADDRESS%/*}0/24 -o \$(ip route show default | awk '{print \$5; exit}') -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s ${ADDRESS%.*}.0/24 -o \$(ip route show default | awk '{print \$5; exit}') -j MASQUERADE
-PostDown = iptables -t nat -D POSTROUTING -s ${ADDRESS%.*}.0/24 -o \$(ip route show default | awk '{print \$5; exit}') -j MASQUERADE 2>/dev/null || true
+PostUp = sysctl -w net.ipv4.ip_forward=1; DEV=\$(ip route show default | awk '{print \$5; exit}'); iptables -t nat -C POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE
+PostDown = DEV=\$(ip route show default | awk '{print \$5; exit}'); iptables -t nat -D POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE 2>/dev/null || true
 EOF
 chmod 600 "$CONFIG_PATH"
 
@@ -84,10 +94,11 @@ sysctl --system >/dev/null
 
 systemctl enable --now awg-quick@awg0
 systemctl is-active --quiet awg-quick@awg0 || fail "awg0 service did not start"
+awg show awg0 >/dev/null || fail "awg0 is unavailable"
 
 install -m 700 -d /etc/darktunnel-node
 cat > /etc/darktunnel-node/awg2.json <<EOF
-{"interface":"awg0","port":$PORT,"address":"$ADDRESS","public_key":"$PUBLIC_KEY","config_path":"$CONFIG_PATH"}
+{"interface":"awg0","port":$PORT,"address":"$ADDRESS","network":"$NETWORK","public_key":"$PUBLIC_KEY","config_path":"$CONFIG_PATH"}
 EOF
 chmod 600 /etc/darktunnel-node/awg2.json
 log "AmneziaWG 2 installed on UDP $PORT"
