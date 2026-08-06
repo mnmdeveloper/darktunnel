@@ -13,8 +13,6 @@ from .bot_access_v2 import router as access_v2_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
 from .bot_servers_v2 import router as servers_v2_router
-from .bot_vkturn_fixups import router as vkturn_fixups_router
-from .bot_vkturn_v2 import router as vkturn_router, sync_peers_forever
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
@@ -32,7 +30,7 @@ def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [button("🔑 Создать ссылку", "access")],
         [button("👥 Пользователи", "users:0"), button("🖥 Серверы", "servers")],
-        [button("📊 Статистика", "stats"), button("📡 VK Turn", "vkturn")],
+        [button("📊 Статистика", "stats")],
         [button("⚙️ Остальное", "settings")],
     ])
 
@@ -133,12 +131,9 @@ async def main() -> None:
     dispatcher.include_router(menu_router)
     dispatcher.include_router(access_v2_router)
     dispatcher.include_router(servers_v2_router)
-    dispatcher.include_router(vkturn_fixups_router)
-    dispatcher.include_router(vkturn_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(features_router)
     dispatcher.include_router(legacy_router)
-    asyncio.create_task(sync_peers_forever())
     await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
