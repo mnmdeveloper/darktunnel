@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-VK_LINK="${DARKTUNNEL_VK_CALL_LINK:-}"
 PUBLIC_HOST="${DARKTUNNEL_PUBLIC_HOST:-}"
 PUBLIC_PORT="${DARKTUNNEL_WDTT_PORT:-56000}"
 META_DIR="/etc/darktunnel-node"
@@ -17,12 +16,6 @@ if systemctl is-active --quiet wdtt.service || [ -s /etc/wdtt/wdtt.env ]; then
   exit 0
 fi
 
-[ -n "$VK_LINK" ] || fail "DARKTUNNEL_VK_CALL_LINK is required"
-case "$VK_LINK" in
-  https://vk.ru/*|https://vk.com/*|https://vk.me/*) ;;
-  *) fail "Invalid VK Call link" ;;
-esac
-
 if [ -z "$PUBLIC_HOST" ]; then
   PUBLIC_HOST="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
 fi
@@ -34,14 +27,20 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl openssl iproute2
+apt-get install -y ca-certificates curl openssl iproute2 python3
 
-SECRET="$(openssl rand -base64 36 | tr -d '\n')"
+SECRET="$(openssl rand -hex 32)"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 curl -fsSL -o "$TMP" https://raw.githubusercontent.com/XXcipherX/vkturn-vps-setup/main/install.sh
 chmod 700 "$TMP"
-"$TMP" install --password "$SECRET" --host "$PUBLIC_HOST" --vk-link "$VK_LINK"
+
+# VK Call Link is intentionally not supplied here. It is a user-entered
+# client-side value in DarkTunnel and is not part of VPS provisioning.
+"$TMP" install \
+  --password "$SECRET" \
+  --host "$PUBLIC_HOST" \
+  --dtls-port "$PUBLIC_PORT"
 
 systemctl is-active --quiet wdtt.service || fail "wdtt.service is not active"
 ip link show wdtt0 >/dev/null 2>&1 || fail "wdtt0 interface is missing"
