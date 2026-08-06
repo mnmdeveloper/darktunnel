@@ -21,7 +21,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    from . import models  # noqa: F401
+    from . import infrastructure_models, models  # noqa: F401
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
