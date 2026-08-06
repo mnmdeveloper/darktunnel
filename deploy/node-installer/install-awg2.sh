@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONFIG_DIR="/etc/amneziawg"
+CONFIG_DIR="/etc/amnezia/amneziawg"
 CONFIG_PATH="$CONFIG_DIR/awg0.conf"
+LEGACY_DIR="/etc/amneziawg"
 PORT="${DARKTUNNEL_AWG_PORT:-585}"
 ADDRESS="${DARKTUNNEL_AWG_ADDRESS:-10.77.0.1/24}"
 
@@ -13,7 +14,7 @@ fail() { printf '[DarkTunnel AWG2] ERROR: %s\n' "$*" >&2; exit 1; }
 . /etc/os-release
 case "${ID:-}" in ubuntu|debian) ;; *) fail "Supported OS: Ubuntu/Debian" ;; esac
 
-if command -v awg >/dev/null 2>&1 && [ -s "$CONFIG_PATH" ]; then
+if command -v awg >/dev/null 2>&1 && { [ -s "$CONFIG_PATH" ] || [ -s "$LEGACY_DIR/awg0.conf" ]; }; then
   log "Existing AmneziaWG configuration detected; leaving it unchanged"
   exit 0
 fi
@@ -58,6 +59,7 @@ command -v awg >/dev/null 2>&1 || fail "awg utility was not installed"
 command -v awg-quick >/dev/null 2>&1 || fail "awg-quick utility was not installed"
 
 install -m 700 -d "$CONFIG_DIR"
+install -m 700 -d "$LEGACY_DIR"
 umask 077
 PRIVATE_KEY="$(awg genkey)"
 PUBLIC_KEY="$(printf '%s' "$PRIVATE_KEY" | awg pubkey)"
@@ -82,17 +84,20 @@ H1 = $H1
 H2 = $H2
 H3 = $H3
 H4 = $H4
-PostUp = sysctl -w net.ipv4.ip_forward=1; DEV=\$(ip route show default | awk '{print \$5; exit}'); iptables -t nat -C POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE
+PostUp = DEV=\$(ip route show default | awk '{print \$5; exit}'); iptables -t nat -C POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE
 PostDown = DEV=\$(ip route show default | awk '{print \$5; exit}'); iptables -t nat -D POSTROUTING -s $NETWORK -o \$DEV -j MASQUERADE 2>/dev/null || true
 EOF
 chmod 600 "$CONFIG_PATH"
+ln -sfn "$CONFIG_PATH" "$LEGACY_DIR/awg0.conf"
 
 cat > /etc/sysctl.d/90-darktunnel-awg.conf <<'EOF'
 net.ipv4.ip_forward=1
 EOF
-sysctl --system >/dev/null
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 
-systemctl enable --now awg-quick@awg0
+systemctl daemon-reload
+systemctl enable awg-quick@awg0
+systemctl restart awg-quick@awg0
 systemctl is-active --quiet awg-quick@awg0 || fail "awg0 service did not start"
 awg show awg0 >/dev/null || fail "awg0 is unavailable"
 
