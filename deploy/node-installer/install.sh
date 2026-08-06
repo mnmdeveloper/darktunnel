@@ -96,10 +96,8 @@ install_wdtt_if_missing() {
     log "Existing WDTT detected; no changes made"
     return
   fi
-  [ -n "${DARKTUNNEL_VK_CALL_LINK:-}" ] || fail "DARKTUNNEL_VK_CALL_LINK is required to install WDTT"
   DARKTUNNEL_PUBLIC_HOST="${DARKTUNNEL_PUBLIC_HOST:-$(read_existing public_host)}" \
   DARKTUNNEL_WDTT_PORT="${DARKTUNNEL_WDTT_PORT:-56000}" \
-  DARKTUNNEL_VK_CALL_LINK="$DARKTUNNEL_VK_CALL_LINK" \
   run_installer "$WDTT_INSTALLER_URL"
 }
 
