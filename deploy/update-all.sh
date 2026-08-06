@@ -16,9 +16,9 @@ log() { printf '[DarkTunnel] %s\n' "$*"; }
 fail() { printf '[DarkTunnel] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ "${EUID}" -eq 0 ] || fail "Run with sudo/root"
-command -v git >/dev/null 2>&1 || fail "git is required"
-command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v docker >/dev/null 2>&1 || fail "docker is required"
+for command in git curl docker tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "$command is required"
+done
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE=(docker compose)
@@ -28,86 +28,84 @@ else
   fail "Docker Compose is required"
 fi
 
+compose() {
+  "${COMPOSE[@]}" --env-file "$APP_DIR/.env" -f "$APP_DIR/$COMPOSE_FILE" "$@"
+}
+
 backup_state() {
-  install -m 700 -d "$BACKUP_DIR"
+  install -m 700 -d "$BACKUP_DIR/config" "$BACKUP_DIR/vpn-snapshots"
   if [ -d "$APP_DIR/.git" ]; then
     OLD_COMMIT="$(git -C "$APP_DIR" rev-parse HEAD)"
     printf '%s\n' "$OLD_COMMIT" > "$BACKUP_DIR/old-commit"
   fi
-  for file in "$APP_DIR/.env" "$APP_DIR/backend/.env" "$APP_DIR/Caddyfile"; do
-    if [ -f "$file" ]; then
-      cp -a "$file" "$BACKUP_DIR/$(basename "$file")"
-    fi
-  done
-  if [ -d /etc/wdtt ]; then
-    tar -C /etc -czf "$BACKUP_DIR/wdtt-readonly-snapshot.tar.gz" wdtt 2>/dev/null || true
-  fi
-  if [ -d /etc/wireguard ]; then
-    tar -C /etc -czf "$BACKUP_DIR/wireguard-readonly-snapshot.tar.gz" wireguard 2>/dev/null || true
-  fi
-  if [ -d /etc/amneziawg ]; then
-    tar -C /etc -czf "$BACKUP_DIR/amneziawg-readonly-snapshot.tar.gz" amneziawg 2>/dev/null || true
-  fi
+  [ -f "$APP_DIR/.env" ] && cp -a "$APP_DIR/.env" "$BACKUP_DIR/config/root.env"
+  [ -f "$APP_DIR/backend/.env" ] && cp -a "$APP_DIR/backend/.env" "$BACKUP_DIR/config/backend.env"
+  [ -f "$APP_DIR/Caddyfile" ] && cp -a "$APP_DIR/Caddyfile" "$BACKUP_DIR/config/Caddyfile"
+  [ -d /etc/wdtt ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/wdtt.tar.gz" wdtt 2>/dev/null || true
+  [ -d /etc/wireguard ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/wireguard.tar.gz" wireguard 2>/dev/null || true
+  [ -d /etc/amneziawg ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/amneziawg.tar.gz" amneziawg 2>/dev/null || true
+  systemctl is-active wdtt.service > "$BACKUP_DIR/wdtt-state" 2>/dev/null || true
+  systemctl is-active wdtt-firewall.service > "$BACKUP_DIR/wdtt-firewall-state" 2>/dev/null || true
 }
 
-restore_files() {
-  [ -f "$BACKUP_DIR/.env" ] && cp -a "$BACKUP_DIR/.env" "$APP_DIR/.env"
-  [ -f "$BACKUP_DIR/backend.env" ] && cp -a "$BACKUP_DIR/backend.env" "$APP_DIR/backend/.env"
-  [ -f "$BACKUP_DIR/Caddyfile" ] && cp -a "$BACKUP_DIR/Caddyfile" "$APP_DIR/Caddyfile"
+restore_config() {
+  [ -f "$BACKUP_DIR/config/root.env" ] && cp -a "$BACKUP_DIR/config/root.env" "$APP_DIR/.env"
+  [ -f "$BACKUP_DIR/config/backend.env" ] && cp -a "$BACKUP_DIR/config/backend.env" "$APP_DIR/backend/.env"
+  [ -f "$BACKUP_DIR/config/Caddyfile" ] && cp -a "$BACKUP_DIR/config/Caddyfile" "$APP_DIR/Caddyfile"
 }
 
 rollback() {
-  log "Update failed. Rolling application code back..."
+  local code=$?
+  trap - ERR
+  log "Update failed; restoring previous application revision"
   if [ -n "$OLD_COMMIT" ] && [ -d "$APP_DIR/.git" ]; then
     git -C "$APP_DIR" reset --hard "$OLD_COMMIT" || true
-    restore_files
-    cd "$APP_DIR"
-    "${COMPOSE[@]}" -f "$COMPOSE_FILE" up -d --build api bot caddy || true
+    restore_config
+    compose build api bot || true
+    compose up -d --no-deps api bot caddy || true
   fi
-  log "Rollback attempt finished. Existing WDTT/AWG services were never stopped or restarted by this script."
+  log "WDTT, VK Turn and AWG host services were not modified"
+  exit "$code"
 }
 trap rollback ERR
 
 backup_state
 
 if [ -d "$APP_DIR/.git" ]; then
-  log "Fetching $BRANCH"
   git -C "$APP_DIR" fetch --prune origin "$BRANCH"
   git -C "$APP_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
 else
-  log "Cloning $BRANCH"
-  rm -rf "$APP_DIR"
+  parent="$(dirname "$APP_DIR")"
+  install -d "$parent"
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 
 NEW_COMMIT="$(git -C "$APP_DIR" rev-parse HEAD)"
 printf '%s\n' "$NEW_COMMIT" > "$BACKUP_DIR/new-commit"
+restore_config
 
-restore_files
-cd "$APP_DIR"
+[ -s "$APP_DIR/.env" ] || fail "Missing $APP_DIR/.env"
+[ -s "$APP_DIR/backend/.env" ] || fail "Missing $APP_DIR/backend/.env"
 
-log "Validating Compose configuration"
-"${COMPOSE[@]}" -f "$COMPOSE_FILE" config >/dev/null
+compose config >/dev/null
+compose build api bot
 
-log "Compiling Python sources"
-"${COMPOSE[@]}" -f "$COMPOSE_FILE" build api bot
+# Only the application containers are recreated. The vkturn container and all
+# host VPN services/interfaces/firewall rules remain untouched.
+compose up -d --no-deps api
+compose up -d --no-deps bot
+compose up -d --no-deps caddy
 
-log "Updating backend and bot only"
-"${COMPOSE[@]}" -f "$COMPOSE_FILE" up -d --no-deps api bot
-"${COMPOSE[@]}" -f "$COMPOSE_FILE" up -d --no-deps caddy
-
-log "Waiting for health check"
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+    compose ps api bot caddy
     trap - ERR
-    log "Update completed successfully"
-    log "Previous commit: ${OLD_COMMIT:-none}"
-    log "Current commit:  $NEW_COMMIT"
-    log "Backup:          $BACKUP_DIR"
-    log "WDTT/VK Turn/AWG services and configs were not changed or restarted"
+    log "Update completed successfully: $NEW_COMMIT"
+    log "Backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 2
 done
 
-fail "Health check failed"
+compose logs --tail=160 api bot || true
+fail "Backend health check failed"
