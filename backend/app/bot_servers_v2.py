@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from html import escape
 
 from aiogram import F, Router
@@ -32,7 +31,6 @@ class ServerWizard(StatesGroup):
     address = State()
     username = State()
     password = State()
-    private_key = State()
     confirm = State()
 
 
@@ -78,7 +76,7 @@ async def servers(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await callback.message.edit_text(
             f"<b>🖥 Серверы</b>\n\nДобавлено серверов: <b>{count}</b>\n"
-            "Новый сервер настраивается автоматически: бот обнаружит AWG2 и VK Turn, включит автовыбор и опубликует только рабочие транспорты.",
+            "Бот автоматически проверяет AWG2 и VK Turn/WDTT, устанавливает только отсутствующие компоненты, включает автовыбор и не меняет уже работающие VPN-сервисы.",
             reply_markup=servers_menu(),
             parse_mode="HTML",
         )
@@ -92,7 +90,7 @@ async def add_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(ServerWizard.name)
     if callback.message:
-        await callback.message.edit_text("<b>Добавление сервера · 1/7</b>\n\nВведите название сервера:", parse_mode="HTML")
+        await callback.message.edit_text("<b>Добавление сервера · 1/6</b>\n\nВведите название сервера:", parse_mode="HTML")
     await callback.answer()
 
 
@@ -104,7 +102,7 @@ async def add_name(message: Message, state: FSMContext) -> None:
         await message.answer("Название не может быть пустым."); return
     await state.update_data(name=value)
     await state.set_state(ServerWizard.country)
-    await message.answer("<b>Добавление сервера · 2/7</b>\n\nВведите страну:", parse_mode="HTML")
+    await message.answer("<b>Добавление сервера · 2/6</b>\n\nВведите страну:", parse_mode="HTML")
 
 
 @router.message(ServerWizard.country)
@@ -115,7 +113,7 @@ async def add_country(message: Message, state: FSMContext) -> None:
         await message.answer("Страна не может быть пустой."); return
     await state.update_data(country=value)
     await state.set_state(ServerWizard.city)
-    await message.answer("<b>Добавление сервера · 3/7</b>\n\nВведите город:", parse_mode="HTML")
+    await message.answer("<b>Добавление сервера · 3/6</b>\n\nВведите город:", parse_mode="HTML")
 
 
 @router.message(ServerWizard.city)
@@ -126,7 +124,7 @@ async def add_city(message: Message, state: FSMContext) -> None:
         await message.answer("Город не может быть пустым."); return
     await state.update_data(city=value)
     await state.set_state(ServerWizard.address)
-    await message.answer("<b>Добавление сервера · 4/7</b>\n\nВведите SSH-адрес: <code>IP</code> или <code>IP:порт</code>.", parse_mode="HTML")
+    await message.answer("<b>Добавление сервера · 4/6</b>\n\nВведите SSH-адрес: <code>IP</code> или <code>IP:порт</code>.", parse_mode="HTML")
 
 
 @router.message(ServerWizard.address)
@@ -138,7 +136,7 @@ async def add_address(message: Message, state: FSMContext) -> None:
         await message.answer("Некорректный SSH-адрес."); return
     await state.update_data(host=host, port=port)
     await state.set_state(ServerWizard.username)
-    await message.answer("<b>Добавление сервера · 5/7</b>\n\nВведите SSH-пользователя, например <code>root</code>:", parse_mode="HTML")
+    await message.answer("<b>Добавление сервера · 5/6</b>\n\nВведите SSH-пользователя, например <code>root</code>:", parse_mode="HTML")
 
 
 @router.message(ServerWizard.username)
@@ -150,50 +148,26 @@ async def add_username(message: Message, state: FSMContext) -> None:
     await state.update_data(username=value)
     await state.set_state(ServerWizard.password)
     await message.answer(
-        "<b>Добавление сервера · 6/7</b>\n\nОтправьте SSH-пароль. Он используется только в памяти во время подключения и не сохраняется.\n\n"
-        "Если вход только по ключу, отправьте <code>-</code>.", parse_mode="HTML"
+        "<b>Добавление сервера · 6/6</b>\n\nОтправьте SSH-пароль. Сообщение будет удалено, пароль используется только в памяти во время установки и не сохраняется.",
+        parse_mode="HTML",
     )
 
 
 @router.message(ServerWizard.password)
 async def add_password(message: Message, state: FSMContext) -> None:
     if await deny_message(message): return
-    value = message.text or ""
+    password = message.text or ""
     try:
         await message.delete()
     except Exception:
         pass
-    await state.update_data(password=None if value.strip() == "-" else value)
-    await state.set_state(ServerWizard.private_key)
-    await message.answer(
-        "<b>Добавление сервера · 7/7</b>\n\nОтправьте приватный SSH-ключ текстом или файлом. Если используете пароль, отправьте <code>-</code>.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(ServerWizard.private_key)
-async def add_key(message: Message, state: FSMContext) -> None:
-    if await deny_message(message): return
-    key: str | None = None
-    if message.document:
-        if not message.bot:
-            await message.answer("Не удалось прочитать файл."); return
-        file = await message.bot.get_file(message.document.file_id)
-        buffer = await message.bot.download_file(file.file_path)
-        key = buffer.read().decode("utf-8") if buffer else None
-    elif (message.text or "").strip() != "-":
-        key = message.text or None
-    try:
-        await message.delete()
-    except Exception:
-        pass
+    if not password:
+        await message.answer("SSH-пароль не может быть пустым.")
+        return
+    await state.update_data(password=password)
     data = await state.get_data()
-    if not data.get("password") and not key:
-        await message.answer("Нужен пароль или приватный SSH-ключ."); return
-    await state.update_data(private_key=key)
     credentials = SSHCredentials(
-        host=data["host"], port=data["port"], username=data["username"],
-        password=data.get("password"), private_key=key,
+        host=data["host"], port=data["port"], username=data["username"], password=password
     )
     status = await message.answer("🔐 Подключаюсь и получаю fingerprint SSH-сервера…")
     try:
@@ -210,7 +184,7 @@ async def add_key(message: Message, state: FSMContext) -> None:
         f"Место: <b>{escape(data['country'])}, {escape(data['city'])}</b>\n"
         f"SSH: <code>{escape(data['username'])}@{escape(data['host'])}:{data['port']}</code>\n"
         f"Fingerprint: <code>{escape(fingerprint)}</code>\n\n"
-        "После подтверждения бот установит только управляющий агент, обнаружит существующие AWG2/WDTT и не перезапустит рабочие VPN-сервисы.",
+        "После подтверждения бот проверит существующие AWG2 и VK Turn/WDTT. Работающие установки останутся без изменений; будут добавлены только отсутствующие компоненты и управляющий агент.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [b("✅ Fingerprint верный — продолжить", "srv2:confirm")],
             [b("❌ Отмена", "servers")],
@@ -224,7 +198,7 @@ async def confirm(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     await callback.answer("Установка запущена")
     if callback.message:
-        await callback.message.edit_text("⏳ Устанавливаю агент, обнаруживаю транспорты и регистрирую сервер…")
+        await callback.message.edit_text("⏳ Проверяю сервер, устанавливаю отсутствующие компоненты и выполняю регистрацию…")
     async with SessionLocal() as session:
         job = ServerOnboardingJob(
             admin_id=callback.from_user.id,
@@ -235,7 +209,7 @@ async def confirm(callback: CallbackQuery, state: FSMContext) -> None:
         session.add(job); await session.commit(); await session.refresh(job)
         try:
             discovery = await install_and_discover(
-                SSHCredentials(data["host"], data["port"], data["username"], data.get("password"), data.get("private_key")),
+                SSHCredentials(data["host"], data["port"], data["username"], data["password"]),
                 ServerDraft(data["name"], data["country"], data["city"], callback.from_user.id),
                 data["fingerprint"],
             )
@@ -245,14 +219,14 @@ async def confirm(callback: CallbackQuery, state: FSMContext) -> None:
                 discovery, data["fingerprint"], job,
             )
             transports = discovery.get("transports", {})
-            awg = "✅" if transports.get("amneziawg2", {}).get("detected") else "⚪️"
-            wdtt = "✅" if transports.get("wdtt", {}).get("detected") else "⚪️"
+            awg = "✅" if transports.get("amneziawg2", {}).get("detected") else "❌"
+            wdtt = "✅" if transports.get("wdtt", {}).get("detected") else "❌"
             text = (
                 f"<b>✅ Сервер добавлен</b>\n\n"
                 f"{escape(node.name)} · {escape(node.country_name)}, {escape(node.city)}\n"
                 f"Адрес: <code>{escape(node.host)}</code>\n"
                 f"{awg} AmneziaWG 2.0\n{wdtt} VK Turn / WDTT\n\n"
-                f"Автовыбор включён. Опубликованы только обнаруженные транспорты."
+                "Автовыбор включён. Уже работающие VPN-компоненты не перезапускались и не перенастраивались."
             )
         except Exception as exc:
             job.status = OnboardingStatus.failed; job.progress = 0; job.detail = str(exc)[:3000]
@@ -282,4 +256,4 @@ async def list_servers(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.in_({"srv2:update-all", "srv2:check-all"}))
 async def not_ready_remote_actions(callback: CallbackQuery) -> None:
     if await deny_callback(callback): return
-    await callback.answer("Функция появится после безопасного хранения deployment credentials", show_alert=True)
+    await callback.answer("Функция будет включена после завершения безопасного механизма обновления", show_alert=True)
