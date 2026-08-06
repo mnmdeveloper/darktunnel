@@ -6,6 +6,7 @@ BRANCH="${DARKTUNNEL_BRANCH:-server-onboarding-v2}"
 REPO_RAW="https://raw.githubusercontent.com/mnmdeveloper/darktunnel/$BRANCH"
 AGENT_URL="$REPO_RAW/deploy/node-agent/node_agent.py"
 AWG_INSTALLER_URL="$REPO_RAW/deploy/node-installer/install-awg2.sh"
+WDTT_INSTALLER_URL="$REPO_RAW/deploy/node-installer/install-wdtt.sh"
 INSTALL_DIR="/opt/darktunnel-node"
 CONFIG_DIR="/etc/darktunnel-node"
 CONFIG_PATH="$CONFIG_DIR/node.json"
@@ -73,17 +74,33 @@ path.chmod(0o600)
 PY
 }
 
+run_installer() {
+  local url="$1" tmp
+  tmp="$(mktemp)"
+  curl -fsSL "$url" -o "$tmp"
+  chmod 700 "$tmp"
+  bash "$tmp"
+  rm -f "$tmp"
+}
+
 install_awg_if_missing() {
   if command -v awg >/dev/null 2>&1 && find /etc/amnezia /etc/amneziawg /etc/wireguard -maxdepth 2 -name '*.conf' -print -quit 2>/dev/null | grep -q .; then
     log "Existing AmneziaWG detected; no changes made"
     return
   fi
-  local tmp
-  tmp="$(mktemp)"
-  curl -fsSL "$AWG_INSTALLER_URL" -o "$tmp"
-  chmod 700 "$tmp"
-  DARKTUNNEL_AWG_PORT="${DARKTUNNEL_AWG_PORT:-585}" bash "$tmp"
-  rm -f "$tmp"
+  DARKTUNNEL_AWG_PORT="${DARKTUNNEL_AWG_PORT:-585}" run_installer "$AWG_INSTALLER_URL"
+}
+
+install_wdtt_if_missing() {
+  if systemctl is-active --quiet wdtt.service || [ -s /etc/wdtt/wdtt.env ]; then
+    log "Existing WDTT detected; no changes made"
+    return
+  fi
+  [ -n "${DARKTUNNEL_VK_CALL_LINK:-}" ] || fail "DARKTUNNEL_VK_CALL_LINK is required to install WDTT"
+  DARKTUNNEL_PUBLIC_HOST="${DARKTUNNEL_PUBLIC_HOST:-$(read_existing public_host)}" \
+  DARKTUNNEL_WDTT_PORT="${DARKTUNNEL_WDTT_PORT:-56000}" \
+  DARKTUNNEL_VK_CALL_LINK="$DARKTUNNEL_VK_CALL_LINK" \
+  run_installer "$WDTT_INSTALLER_URL"
 }
 
 install_agent() {
@@ -127,6 +144,7 @@ case "$ACTION" in
     install_packages
     write_config
     install_awg_if_missing
+    install_wdtt_if_missing
     install_agent
     show_status
     ;;
