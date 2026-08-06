@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .infrastructure_models import ServerTransport, TransportType
 from .models import ServerHealth, ServerNode
 from .server_crypto import decrypt_server_config
 
@@ -51,10 +52,46 @@ async def published_servers(session: AsyncSession) -> list[ClientServer]:
             .order_by(ServerHealth.timestamp.desc())
             .limit(1)
         )
-        try:
-            config = decrypt_server_config(node.encrypted_config)
-        except Exception:
+
+        transport = await session.scalar(
+            select(ServerTransport).where(
+                ServerTransport.server_id == node.id,
+                ServerTransport.transport_type == TransportType.wdtt,
+                ServerTransport.enabled.is_(True),
+                ServerTransport.published.is_(True),
+            )
+        )
+
+        config: dict[str, object] = {}
+        host = node.host
+        port = node.port
+        mode = node.protocol_mode
+        mtu = node.mtu
+        dns = node.dns
+        online = bool(health.online) if health else True
+
+        if transport is not None:
+            try:
+                config = decrypt_server_config(transport.encrypted_config)
+            except Exception:
+                config = {}
+            host = transport.host or node.host
+            port = transport.port or 56000
+            mode = str(config.get("mode") or "srtp-wrap-a")
+            mtu = transport.mtu or node.mtu
+            dns = transport.dns or node.dns
+            online = online and transport.online
+        else:
+            # Backward compatibility for the original production server,
+            # whose WDTT secret is stored in ServerNode.encrypted_config.
+            try:
+                config = decrypt_server_config(node.encrypted_config)
+            except Exception:
+                continue
+
+        if not host or port <= 0 or not str(config.get("wrap_a_password", "")):
             continue
+
         result.append(
             ClientServer(
                 id=str(node.id),
@@ -64,15 +101,15 @@ async def published_servers(session: AsyncSession) -> list[ClientServer]:
                 city=node.city,
                 latitude=node.latitude,
                 longitude=node.longitude,
-                host=node.host,
-                port=node.port,
-                protocol_mode=node.protocol_mode,
-                mtu=node.mtu,
-                dns=node.dns,
+                host=host,
+                port=port,
+                protocol_mode=mode,
+                mtu=mtu,
+                dns=dns,
                 balanced_connections=node.balanced_connections,
                 max_connections=node.max_connections,
                 latency_ms=health.latency_ms if health else None,
-                online=bool(health.online) if health else True,
+                online=online,
                 config=config,
             )
         )

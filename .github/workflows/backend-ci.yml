@@ -2,17 +2,20 @@ name: Backend CI
 
 on:
   push:
-    branches: [main, backend-bot-mvp]
+    branches: [main, backend-bot-mvp, server-onboarding-v2]
     paths:
       - 'backend/**'
+      - 'deploy/**'
       - 'docker-compose.backend.yml'
       - 'install-backend.sh'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'deploy/**'
       - 'docker-compose.backend.yml'
       - 'install-backend.sh'
+      - '.github/workflows/backend-ci.yml'
 
 jobs:
   validate:
@@ -26,6 +29,8 @@ jobs:
         run: pip install -r backend/requirements.txt
       - name: Compile Python
         run: python -m compileall -q backend/app
+      - name: Validate shell scripts
+        run: bash -n deploy/update-all.sh deploy/node-installer/install.sh
       - name: Prepare CI environment
         run: |
           cat > .env <<'EOF'
@@ -40,10 +45,11 @@ jobs:
           TELEGRAM_BOT_TOKEN=123456:CI_TOKEN
           TELEGRAM_OWNER_ID=1
           ACTIVATION_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          SERVER_CONFIG_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
           WDTT_PUBLIC_HOST=127.0.0.1
           WDTT_PUBLIC_PORT=56000
           EOF
       - name: Validate Docker Compose
         run: docker compose --env-file .env -f docker-compose.backend.yml config >/dev/null
       - name: Build containers
-        run: docker compose --env-file .env -f docker-compose.backend.yml build
+        run: docker compose --env-file .env -f docker-compose.backend.yml build api bot

@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DarkTunnel Backend", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="DarkTunnel Backend", version="0.5.1", lifespan=lifespan)
 app.include_router(admin_management_router)
 
 
