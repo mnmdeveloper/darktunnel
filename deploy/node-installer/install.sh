@@ -19,10 +19,19 @@ fail() { printf '[DarkTunnel] ERROR: %s\n' "$*" >&2; exit 1; }
 [ "${EUID}" -eq 0 ] || fail "Run with sudo/root"
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 
+repair_packages() {
+  export DEBIAN_FRONTEND=noninteractive
+  log "Checking dpkg/apt state"
+  dpkg --configure -a
+  apt-get -f install -y
+}
+
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
+  repair_packages
   apt-get update
   apt-get install -y ca-certificates curl python3 iproute2 openssl
+  dpkg --audit || true
 }
 
 public_host() {
