@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO="https://github.com/mnmdeveloper/darktunnel.git"
-BRANCH="${DARKTUNNEL_BRANCH:-main}"
+BRANCH="${DARKTUNNEL_BRANCH:-server-onboarding-v2}"
 APP_DIR="${DARKTUNNEL_APP_DIR:-/opt/darktunnel}"
 BACKUP_ROOT="${DARKTUNNEL_BACKUP_DIR:-/opt/darktunnel-backups}"
 COMPOSE_FILE="docker-compose.backend.yml"
@@ -44,8 +44,9 @@ backup_state() {
   [ -d /etc/wdtt ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/wdtt.tar.gz" wdtt 2>/dev/null || true
   [ -d /etc/wireguard ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/wireguard.tar.gz" wireguard 2>/dev/null || true
   [ -d /etc/amneziawg ] && tar -C /etc -czf "$BACKUP_DIR/vpn-snapshots/amneziawg.tar.gz" amneziawg 2>/dev/null || true
-  systemctl is-active wdtt.service > "$BACKUP_DIR/wdtt-state" 2>/dev/null || true
-  systemctl is-active wdtt-firewall.service > "$BACKUP_DIR/wdtt-firewall-state" 2>/dev/null || true
+  if [ -d "$APP_DIR" ] && [ -f "$APP_DIR/.env" ] && [ -f "$APP_DIR/$COMPOSE_FILE" ]; then
+    compose exec -T db pg_dump -U darktunnel -d darktunnel -Fc > "$BACKUP_DIR/database.dump" 2>/dev/null || true
+  fi
 }
 
 restore_config() {
@@ -64,7 +65,7 @@ rollback() {
     compose build api bot || true
     compose up -d --no-deps api bot caddy || true
   fi
-  log "WDTT, VK Turn and AWG host services were not modified"
+  log "Host WDTT/VK Turn/AWG services and configs were not modified"
   exit "$code"
 }
 trap rollback ERR
@@ -75,8 +76,7 @@ if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" fetch --prune origin "$BRANCH"
   git -C "$APP_DIR" checkout -B "$BRANCH" "origin/$BRANCH"
 else
-  parent="$(dirname "$APP_DIR")"
-  install -d "$parent"
+  install -d "$(dirname "$APP_DIR")"
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 
@@ -88,24 +88,28 @@ restore_config
 [ -s "$APP_DIR/backend/.env" ] || fail "Missing $APP_DIR/backend/.env"
 
 compose config >/dev/null
+compose up -d db redis
 compose build api bot
-
-# Only the application containers are recreated. The vkturn container and all
-# host VPN services/interfaces/firewall rules remain untouched.
 compose up -d --no-deps api
 compose up -d --no-deps bot
 compose up -d --no-deps caddy
 
+if systemctl list-unit-files darktunnel-node.service >/dev/null 2>&1; then
+  curl -fsSL "https://raw.githubusercontent.com/mnmdeveloper/darktunnel/$BRANCH/deploy/node-installer/install.sh" | \
+    DARKTUNNEL_BRANCH="$BRANCH" bash -s -- update
+fi
+
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
-    compose ps api bot caddy
+    compose ps db redis api bot caddy
     trap - ERR
-    log "Update completed successfully: $NEW_COMMIT"
+    log "Full central server update completed: $NEW_COMMIT"
     log "Backup: $BACKUP_DIR"
+    log "Activation links remain darktunnel://activate?d=TOKEN"
     exit 0
   fi
   sleep 2
 done
 
-compose logs --tail=160 api bot || true
+compose logs --tail=200 api bot || true
 fail "Backend health check failed"
