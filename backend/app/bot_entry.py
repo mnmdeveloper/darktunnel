@@ -8,11 +8,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
-from .bot import router as legacy_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
-from .bot_vkturn_fixups import router as vkturn_fixups_router
-from .bot_vkturn_v2 import router as vkturn_router, sync_peers_forever
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
@@ -28,13 +25,10 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [button("📊 Статистика", "stats"), button("👥 Пользователи", "users:0")],
-        [button("🔑 DarkTurn ссылки", "access"), button("📡 VK Turn", "vkturn")],
-        [button("🖥 Серверы", "servers"), button("💳 Продажи", "sales")],
-        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcements")],
-        [button("🚨 Техработы", "maintenance"), button("📲 Push", "push")],
-        [button("👮 Администраторы", "admins"), button("🧾 Журнал", "audit:0")],
-        [button("⚙️ Настройки", "settings")],
+        [button("🔑 Создать ссылку", "mg:link:new")],
+        [button("👥 Пользователи", "users:0"), button("🖥 Серверы", "servers")],
+        [button("📊 Статистика", "stats")],
+        [button("⚙️ Остальное", "misc")],
     ])
 
 
@@ -95,7 +89,7 @@ async def start(message: Message, state: FSMContext) -> None:
         await message.answer("Доступ запрещён.")
         return
     await state.clear()
-    await message.answer("<b>DarkTunnel Admin</b>\n\nDarkTurn и VK Turn управляются отдельно.", reply_markup=menu(), parse_mode="HTML")
+    await message.answer("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
 
 
 @menu_router.callback_query(F.data == "home")
@@ -105,7 +99,40 @@ async def home(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.clear()
     if callback.message:
-        await callback.message.edit_text("<b>DarkTunnel Admin</b>\n\nВыберите раздел:", reply_markup=menu(), parse_mode="HTML")
+        await callback.message.edit_text("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
+    await callback.answer()
+
+
+@menu_router.callback_query(F.data == "misc")
+async def misc(callback: CallbackQuery) -> None:
+    if not is_owner(callback.from_user.id):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    rows = [
+        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcements")],
+        [button("📲 Push", "push"), button("👮 Администраторы", "admins")],
+        [button("🧾 Журнал", "audit:0"), button("💳 Продажи", "sales")],
+        [button("⬅️ Главное меню", "home")],
+    ]
+    if callback.message:
+        await callback.message.edit_text("<b>⚙️ Остальное</b>\n\nДополнительные разделы.", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows), parse_mode="HTML")
+    await callback.answer()
+
+
+@menu_router.callback_query(F.data == "stats")
+async def stats(callback: CallbackQuery) -> None:
+    if not is_owner(callback.from_user.id):
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+    from .models import Activation, User
+    from sqlalchemy import func
+    async with SessionLocal() as session:
+        total_users = int(await session.scalar(select(func.count(User.id))) or 0)
+        total_links = int(await session.scalar(select(func.count(Activation.id))) or 0)
+        total_servers = int(await session.scalar(select(func.count(ServerNode.id)).where(ServerNode.archived_at.is_(None))) or 0)
+    text = f"<b>📊 Статистика</b>\n\nПользователей: <b>{total_users}</b>\nСсылок: <b>{total_links}</b>\nСерверов: <b>{total_servers}</b>"
+    if callback.message:
+        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button("⬅️ Главное меню", "home")]]), parse_mode="HTML")
     await callback.answer()
 
 
@@ -124,12 +151,8 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
-    dispatcher.include_router(vkturn_fixups_router)
-    dispatcher.include_router(vkturn_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(features_router)
-    dispatcher.include_router(legacy_router)
-    asyncio.create_task(sync_peers_forever())
     await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
