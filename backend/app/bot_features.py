@@ -545,7 +545,12 @@ async def server_publish(callback: CallbackQuery) -> None:
         await toggle_node(callback, "published", "server.publish.toggle")
 
 
-@router.callback_query(F.data.startswith("server:maintenance:") and F.data.func(lambda d: len(d.split(":")) == 3))
+def _is_single_server_maintenance_toggle(data: str) -> bool:
+    parts = data.split(":")
+    return len(parts) == 3 and parts[0] == "server" and parts[1] == "maintenance"
+
+
+@router.callback_query(F.data.func(_is_single_server_maintenance_toggle))
 async def server_maintenance(callback: CallbackQuery) -> None:
     if not await reject_callback(callback):
         await toggle_node(callback, "maintenance", "server.maintenance.toggle")
