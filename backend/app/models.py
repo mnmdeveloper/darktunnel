@@ -123,3 +123,23 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(128))
     result: Mapped[str] = mapped_column(String(32), default="success")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class VkTurnAccess(Base):
+    __tablename__ = "vkturn_access"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    public_key: Mapped[str] = mapped_column(Text, default="")
+    peer_ip: Mapped[str] = mapped_column(String(64), default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class VkTurnSetting(Base):
+    __tablename__ = "vkturn_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
