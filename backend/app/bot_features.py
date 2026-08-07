@@ -291,7 +291,7 @@ async def server_view(callback: CallbackQuery) -> None:
     online_text = f"{status_icon} online" if (health and health.online) else "🔴 нет свежей проверки"
     latency = f" · {health.latency_ms}ms" if (health and health.latency_ms) else ""
     users_info = f"\nПодключений: <b>{health.active_connections}</b>" if (health and health.active_connections) else ""
-    note_text = f"\nЗаметка: {escape(node.note)}" if hasattr(node, 'note') and node.note else ""
+    note_text = ""
 
     keyboard = [
         [btn("🙈 Скрыть" if node.published else "📢 Опубликовать", f"server:publish:{node.id}")],
