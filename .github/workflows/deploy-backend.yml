@@ -5,10 +5,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'backend/**'
-      - 'docker-compose.backend.yml'
-      - 'install-backend.sh'
-      - '.github/workflows/deploy-backend.yml'
+      - backend/**
+      - docker-compose.backend.yml
+      - scripts/update.sh
+      - .github/workflows/deploy-backend.yml
 
 jobs:
   deploy:
@@ -21,30 +21,15 @@ jobs:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -euo pipefail
-          test -n "$VPS_HOST"
-          test -n "$VPS_USER"
-          test -n "$VPS_SSH_KEY"
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf "%s
+" "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy existing installation
+      - name: Run update script on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" 'sudo bash -s' <<'REMOTE'
-          set -Eeuo pipefail
-          cd /opt/darktunnel
-          git fetch origin main
-          git checkout main
-          git reset --hard origin/main
-          docker compose --env-file .env -f docker-compose.backend.yml up -d --build
-          for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8000/health >/dev/null && exit 0
-            sleep 2
-          done
-          docker compose --env-file .env -f docker-compose.backend.yml logs --tail=120 api bot
-          exit 1
-          REMOTE
+          ssh "$VPS_USER@$VPS_HOST" bash /opt/darktunnel/scripts/update.sh
