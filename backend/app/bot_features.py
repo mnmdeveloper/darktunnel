@@ -134,9 +134,6 @@ async def server_install_start(callback: CallbackQuery, state: FSMContext) -> No
     if await reject_callback(callback):
         return
     settings = get_settings()
-    if not settings.wdtt_vk_call_link:
-        await callback.answer("На backend не настроен WDTT_VK_CALL_LINK", show_alert=True)
-        return
     if not settings.server_config_encryption_key:
         await callback.answer("На backend не настроен SERVER_CONFIG_ENCRYPTION_KEY", show_alert=True)
         return
@@ -198,7 +195,6 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
             password=password,
             expected_host_key_sha256=probe.host_key_sha256,
             public_host=host,
-            vk_call_link=get_settings().wdtt_vk_call_link,
             public_port=56000,
         )
         encrypted = encrypt_server_config({
