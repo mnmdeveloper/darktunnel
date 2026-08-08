@@ -134,11 +134,11 @@ sudo -n true 2>/dev/null || true
 RUN=""
 if [ "$(id -u)" -ne 0 ]; then RUN="sudo"; fi
 $RUN apt-get update
-$RUN apt-get install -y curl ca-certificates openssl
+$RUN apt-get install -y curl ca-certificates
 TMP=$(mktemp)
-curl -fsSL -o "$TMP" https://raw.githubusercontent.com/XXcipherX/vkturn-vps-setup/main/install.sh
+curl -fsSL -o "$TMP" "https://raw.githubusercontent.com/mnmdeveloper/darktunnel/main/vkturn/install.sh"
 chmod 700 "$TMP"
-$RUN "$TMP" install --password "$DT_SECRET" --host "$DT_PUBLIC_HOST"
+$RUN "$TMP" install --password "$DT_SECRET" --host "$DT_PUBLIC_HOST" --dtls-port "$DT_PUBLIC_PORT"
 rm -f "$TMP"
 $RUN systemctl is-active --quiet wdtt
 $RUN ip link show wdtt0 >/dev/null
@@ -155,7 +155,7 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
                     "DT_PUBLIC_PORT": str(public_port),
                 },
             ),
-            timeout=900,
+            timeout=1500,
         )
 
     values = {line.split("=", 1)[0]: line.split("=", 1)[1] for line in result.stdout.splitlines() if "=" in line}
@@ -168,4 +168,5 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
         generated_secret=generated_secret,
         output=result.stdout[-4000:],
     )
+
 
