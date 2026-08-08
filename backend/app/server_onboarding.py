@@ -103,13 +103,10 @@ async def install_wdtt_node(
     password: str,
     expected_host_key_sha256: str,
     public_host: str,
-    vk_call_link: str,
     public_port: int = 56000,
 ) -> ServerInstallResult:
     host = validate_host(host)
     public_host = validate_host(public_host)
-    if not vk_call_link.startswith(("https://vk.ru/", "https://vk.com/", "https://vk.me/")):
-        raise ValueError("Нужна корректная VK Call Link")
     if not 1 <= public_port <= 65535:
         raise ValueError("Некорректный публичный порт")
 
@@ -141,7 +138,7 @@ $RUN apt-get install -y curl ca-certificates openssl
 TMP=$(mktemp)
 curl -fsSL -o "$TMP" https://raw.githubusercontent.com/XXcipherX/vkturn-vps-setup/main/install.sh
 chmod 700 "$TMP"
-$RUN "$TMP" install --password "$DT_SECRET" --host "$DT_PUBLIC_HOST" --vk-link "$DT_VK_LINK"
+$RUN "$TMP" install --password "$DT_SECRET" --host "$DT_PUBLIC_HOST"
 rm -f "$TMP"
 $RUN systemctl is-active --quiet wdtt
 $RUN ip link show wdtt0 >/dev/null
@@ -155,7 +152,6 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
                 env={
                     "DT_SECRET": generated_secret,
                     "DT_PUBLIC_HOST": public_host,
-                    "DT_VK_LINK": vk_call_link,
                     "DT_PUBLIC_PORT": str(public_port),
                 },
             ),
@@ -172,3 +168,4 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
         generated_secret=generated_secret,
         output=result.stdout[-4000:],
     )
+
