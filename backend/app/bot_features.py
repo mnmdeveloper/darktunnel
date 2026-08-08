@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from html import escape
 
 import asyncssh
+import httpx
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -104,6 +105,25 @@ async def ssh_run(node: ServerNode, password: str, command: str, timeout: int = 
     return (result.stdout or "") + (result.stderr or "")
 
 
+async def geo_lookup(host: str) -> dict:
+    """Определяет страну/город/координаты сервера по IP. При ошибке возвращает пустые поля."""
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(f"http://ip-api.com/json/{host}?fields=status,country,countryCode,city,lat,lon")
+            data = resp.json()
+        if data.get("status") == "success":
+            return {
+                "country_code": (data.get("countryCode") or "").upper(),
+                "country_name": data.get("country") or "",
+                "city": data.get("city") or "",
+                "latitude": data.get("lat"),
+                "longitude": data.get("lon"),
+            }
+    except Exception:
+        pass
+    return {"country_code": "", "country_name": "", "city": "", "latitude": None, "longitude": None}
+
+
 # ─── Серверы (главный экран) ───────────────────────────────────────────────────
 
 @router.callback_query(F.data == "servers")
@@ -183,7 +203,7 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
     host = data["host"]
     username = data["username"]
     progress = await message.answer(
-        f"⏳ <b>Устанавливаю DarkTunnel на {escape(host)}</b>\n\nПодключение по SSH → установка WDTT → настройка сети → проверки → регистрация. Это может занять несколько минут.",
+        f"⏳ <b>Устанавливаю DarkTunnel на {escape(host)}</b>\n\nПодключение по SSH → установка Go → сборка WDTT из исходников → настройка WireGuard/сети → firewall → проверки → регистрация.\n\nЭто может занять 5–15 минут, не закрывайте чат.",
         parse_mode="HTML",
     )
     try:
@@ -197,6 +217,8 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
             public_host=host,
             public_port=56000,
         )
+        geo = await geo_lookup(host)
+        server_name = f"{geo['country_name']} · {geo['city']}".strip(" ·") if (geo["country_name"] or geo["city"]) else f"Server {host}"
         encrypted = encrypt_server_config({
             "wrap_a_password": result.generated_secret,
             "ssh_host_key_sha256": probe.host_key_sha256,
@@ -206,7 +228,12 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
             existing = await session.scalar(select(ServerNode).where(ServerNode.host == host, ServerNode.archived_at.is_(None)))
             if existing is None:
                 node = ServerNode(
-                    name=f"Server {host}",
+                    name=server_name,
+                    country_code=geo["country_code"],
+                    country_name=geo["country_name"],
+                    city=geo["city"],
+                    latitude=geo["latitude"],
+                    longitude=geo["longitude"],
                     host=host,
                     port=result.public_port,
                     protocol_mode="srtp-wrap-a",
@@ -224,6 +251,12 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
                 node = existing
                 node.encrypted_config = encrypted
                 node.port = result.public_port
+                if not node.country_name and geo["country_name"]:
+                    node.country_code = geo["country_code"]
+                    node.country_name = geo["country_name"]
+                    node.city = geo["city"]
+                    node.latitude = geo["latitude"]
+                    node.longitude = geo["longitude"]
                 node.published = True
                 node.auto_select = True
                 node.maintenance = False
@@ -605,3 +638,4 @@ async def feature_page(callback: CallbackQuery) -> None:
         return
     title, description = FEATURE_TEXTS[callback.data]
     await edit(callback, f"<b>{title}</b>\n\n{description}", [home_button()])
+
