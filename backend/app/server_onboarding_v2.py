@@ -99,16 +99,14 @@ async def install_and_discover(credentials: SSHCredentials, draft: ServerDraft, 
             f"DARKTUNNEL_COUNTRY={shlex.quote(draft.country)}",
             f"DARKTUNNEL_CITY={shlex.quote(draft.city)}",
             f"DARKTUNNEL_PUBLIC_HOST={shlex.quote(credentials.host)}",
-            "DARKTUNNEL_AWG_PORT=585",
-            "DARKTUNNEL_WDTT_PORT=56000",
         ])
-        await _run(connection, f"curl -fsSL {shlex.quote(INSTALL_URL.format(branch=branch))} | {env} bash -s -- install-all", credentials.password, timeout=1800)
+        await _run(connection, f"curl -fsSL {shlex.quote(INSTALL_URL.format(branch=branch))} | {env} bash -s -- install", credentials.password, timeout=1800)
         token = await _run(connection, "python3 -c 'import json; print(json.load(open(\"/etc/darktunnel-node/node.json\"))[\"management_token\"])'", credentials.password)
         status = await _run(connection, f"curl -fsS -H {shlex.quote('Authorization: Bearer ' + token)} http://127.0.0.1:8787/v1/status", credentials.password)
         discovery = json.loads(status)
         secret_json = await _run(
             connection,
-            "python3 - <<'PY'\nimport json, pathlib\nout={}\np=pathlib.Path('/etc/darktunnel-node/wdtt.json')\nif p.exists():\n    try: out['wdtt_password']=json.loads(p.read_text()).get('password','')\n    except Exception: pass\nif not out.get('wdtt_password'):\n    for q in (pathlib.Path('/etc/wdtt/wdtt.env'), pathlib.Path('/opt/wdtt/wdtt.env')):\n        if q.exists():\n            for line in q.read_text().splitlines():\n                if '=' in line and line.split('=',1)[0].strip()=='WDTT_PASSWORD':\n                    out['wdtt_password']=line.split('=',1)[1].strip().strip(chr(34)).strip(chr(39))\n                    break\nprint(json.dumps(out))\nPY",
+            "python3 - <<'PY'\nimport json, pathlib\nout={}\nfor q in (pathlib.Path('/etc/wdtt/wdtt.env'), pathlib.Path('/opt/wdtt/wdtt.env')):\n    if q.exists():\n        for line in q.read_text().splitlines():\n            if '=' in line and line.split('=',1)[0].strip()=='WDTT_PASSWORD':\n                out['wdtt_password']=line.split('=',1)[1].strip().strip(chr(34)).strip(chr(39))\n                break\n    if out.get('wdtt_password'): break\nprint(json.dumps(out))\nPY",
             credentials.password,
         )
         discovery["_management_token"] = token
@@ -138,7 +136,7 @@ async def register_discovery(session: AsyncSession, draft: ServerDraft, discover
     transports = discovery.get("transports", {})
     secrets = discovery.get("_secrets", {}) if isinstance(discovery.get("_secrets"), dict) else {}
     any_online = False
-    for transport_type in (TransportType.amneziawg2, TransportType.wdtt):
+    for transport_type in (TransportType.amneziawg2, TransportType.wdtt, TransportType.vkturn):
         info = transports.get(transport_type.value, {}) if isinstance(transports, dict) else {}
         detected = bool(info.get("detected"))
         online = bool(info.get("online", detected))
@@ -153,7 +151,7 @@ async def register_discovery(session: AsyncSession, draft: ServerDraft, discover
         row.published = online
         row.status_detail = json.dumps(info, ensure_ascii=False)[:8000]
         row.last_checked_at = datetime.now(UTC)
-        row.port = int(info.get("port") or (56000 if transport_type == TransportType.wdtt else 0))
+        row.port = int(info.get("port") or (56000 if transport_type == TransportType.wdtt else 56100 if transport_type == TransportType.vkturn else 0))
         row.detected_version = str(info.get("version") or "")[:128]
         if transport_type == TransportType.wdtt and secrets.get("wdtt_password"):
             row.encrypted_config = encrypt_server_config({"wrap_a_password": secrets["wdtt_password"], "mode": "srtp-wrap-a"})
@@ -164,6 +162,8 @@ async def register_discovery(session: AsyncSession, draft: ServerDraft, discover
                 "address": info.get("address", ""),
                 "network": info.get("network", ""),
             })
+        elif transport_type == TransportType.vkturn:
+            row.encrypted_config = None
         any_online = any_online or online
 
     node.published = any_online
@@ -171,7 +171,7 @@ async def register_discovery(session: AsyncSession, draft: ServerDraft, discover
     job.server_id = node.id
     job.status = OnboardingStatus.completed
     job.progress = 100
-    job.detail = "Server installed, discovered and registered"
+    job.detail = "Server discovered and registered without changing existing VPN transports"
     session.add(AuditLog(admin_id=draft.admin_id, action="server.onboard", entity_type="server", entity_id=str(node.id), result="success"))
     await session.commit()
     return node
