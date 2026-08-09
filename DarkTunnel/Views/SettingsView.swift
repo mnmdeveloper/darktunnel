@@ -43,8 +43,18 @@ struct SettingsView: View {
 
     private var speedSection: some View {
         compactSection("СКОРОСТЬ") {
-            compactOption(icon: "speedometer", title: "Сбалансированная", subtitle: "3 соединения — быстрее запускается и расходует меньше батареи", selected: viewModel.speedMode == .balanced) { viewModel.speedMode = .balanced }
-            compactOption(icon: "bolt.fill", title: "Максимальная", subtitle: "10 соединений — выше скорость при хорошем канале", selected: viewModel.speedMode == .maximum) { viewModel.speedMode = .maximum }
+            compactOption(
+                icon: "speedometer",
+                title: "Стандарт",
+                subtitle: "5 соединений — режим по умолчанию",
+                selected: viewModel.speedMode == .balanced
+            ) { viewModel.speedMode = .balanced }
+            compactOption(
+                icon: "bolt.fill",
+                title: "Максимум",
+                subtitle: "10 соединений — включается только вручную",
+                selected: viewModel.speedMode == .maximum
+            ) { viewModel.speedMode = .maximum }
         }
     }
 
@@ -56,7 +66,7 @@ struct SettingsView: View {
                 Text("обновлено автоматически").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 5)
             compactCard {
-                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Приложение использует сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) { viewModel.selectAutomaticServer() }
+                compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Выбираем сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) { viewModel.selectAutomaticServer() }
             }
             VStack(spacing: 7) {
                 ForEach(viewModel.servers) { server in
@@ -83,10 +93,14 @@ struct SettingsView: View {
 
     private var transportSection: some View {
         compactSection("ТРАНСПОРТ") {
-            compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Использовать VK TURN → SRTP-WRAP-A → WDTT", selected: viewModel.preferredTransport == .automatic) {
+            compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Wi‑Fi → AmneziaWG · мобильная сеть → Google/VK проверка", selected: viewModel.preferredTransport == .automatic) {
                 viewModel.preferredTransport = .automatic
+                viewModel.refreshConnectivity()
             }
-            compactOption(icon: "phone.fill", title: "VK TURN", subtitle: "Использовать обход через VK-звонок и существующий WDTT-сервер", selected: viewModel.preferredTransport == .vkTurn) {
+            compactOption(icon: "shield.lefthalf.filled", title: "AmneziaWG", subtitle: "Всегда использовать AmneziaWG", selected: viewModel.preferredTransport == .amneziaWG) {
+                viewModel.preferredTransport = .amneziaWG
+            }
+            compactOption(icon: "phone.fill", title: "VK обход", subtitle: "Всегда использовать обход через VK-звонок", selected: viewModel.preferredTransport == .vkTurn) {
                 viewModel.preferredTransport = .vkTurn
             }
         }
@@ -94,27 +108,25 @@ struct SettingsView: View {
 
     private var behaviorSection: some View {
         compactSection("АВТОМАТИКА И УВЕДОМЛЕНИЯ") {
-            toggleRow(icon: "moon.zzz.fill", title: "Выключать при сне", subtitle: "Отключать VPN после блокировки iPhone", isOn: $viewModel.disconnectOnSleep)
+            toggleRow(icon: "moon.zzz.fill", title: "Выключать при сне", subtitle: "Отключать VPN при уходе приложения в фон", isOn: $viewModel.disconnectOnSleep)
             Divider().overlay(.white.opacity(0.07))
-            toggleRow(icon: "sunrise.fill", title: "Включать при пробуждении", subtitle: "Подключаться после разблокировки", isOn: $viewModel.reconnectAfterWake)
+            toggleRow(icon: "sunrise.fill", title: "Включать при пробуждении", subtitle: "Возвращать VPN после возврата в приложение", isOn: $viewModel.reconnectAfterWake)
             Divider().overlay(.white.opacity(0.07))
-            toggleRow(icon: "bell.badge.fill", title: "Уведомления через VPN", subtitle: "Направлять трафик Apple Push через туннель", isOn: $viewModel.routeAPNsThroughVPN)
+            toggleRow(icon: "bell.badge.fill", title: "Уведомления через VPN", subtitle: "Сохранять настройку для полного туннеля; Push при полном VPN-маршруте идёт через VPN", isOn: $viewModel.routeAPNsThroughVPN)
             Divider().overlay(.white.opacity(0.07))
-            toggleRow(icon: "rectangle.on.rectangle.angled", title: "Live Activity и Dynamic Island", subtitle: "Показывать сервер, пинг и кнопку отключения на экране блокировки и в островке", isOn: $viewModel.liveActivitiesEnabled)
+            toggleRow(icon: "rectangle.on.rectangle.angled", title: "Live Activity и Dynamic Island", subtitle: "Показывать сервер, пинг и кнопку отключения", isOn: $viewModel.liveActivitiesEnabled)
         }
     }
 
     private var diagnosticsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ДИАГНОСТИКА").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary).padding(.leading, 5)
-            NavigationLink {
-                LogsView()
-            } label: {
+            NavigationLink { LogsView() } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "doc.text.magnifyingglass").font(.body.weight(.semibold)).frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Логи").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                        Text("Активация, backend, VPN-профиль и системные статусы").font(.caption2).foregroundStyle(.secondary)
+                        Text("Активация, backend, VPN и системные статусы").font(.caption2).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
@@ -186,10 +198,10 @@ struct SettingsView: View {
     }
 
     private func latencyBadge(_ value: Int) -> some View {
-        let tint: Color = value < 70 ? .green : (value < 130 ? .yellow : .orange)
+        let tint: Color = value <= 0 ? .secondary : (value < 70 ? .green : (value < 130 ? .yellow : .orange))
         return HStack(spacing: 4) {
             Circle().fill(tint).frame(width: 6, height: 6)
-            Text("\(value) мс").font(.caption2.monospacedDigit().weight(.semibold))
+            Text(value > 0 ? "\(value) мс" : "—").font(.caption2.monospacedDigit().weight(.semibold))
         }.foregroundStyle(tint).padding(.horizontal, 9).padding(.vertical, 5).background(tint.opacity(0.14), in: Capsule())
     }
 
