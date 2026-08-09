@@ -31,6 +31,10 @@ class ServerRebootWizard(StatesGroup):
     password = State()
 
 
+class ServerAwgInstallWizard(StatesGroup):
+    password = State()
+
+
 class ServerRename(StatesGroup):
     name = State()
 
@@ -348,6 +352,8 @@ async def server_view(callback: CallbackQuery) -> None:
     ]
     if has_awg:
         keyboard.append([btn("📄 AmneziaWG конфиг", f"server:awg:{node.id}")])
+    else:
+        keyboard.append([btn("➕ Установить AmneziaWG", f"server:awg:install:ask:{node.id}")])
     keyboard.append([btn("🗄 Архивировать", f"server:archive:confirm:{node.id}")])
     keyboard.append([btn("⬅️ К списку", "server:list")])
     await edit(
@@ -428,6 +434,103 @@ async def server_reboot_password(message: Message, state: FSMContext) -> None:
         await progress.edit_text(
             f"❌ <b>Ошибка перезагрузки</b>\n\n{escape(str(e))}",
             reply_markup=kb([[btn("🖥 К серверу", f"server:view:{node_id}")]]),
+            parse_mode="HTML",
+        )
+    finally:
+        password = ""
+
+
+# ─── Установка AmneziaWG на существующий сервер ────────────────────────────────
+
+@router.callback_query(F.data.startswith("server:awg:install:ask:"))
+async def server_awg_install_ask(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    node_id = callback.data.rsplit(":", 1)[1]
+    await edit(
+        callback,
+        "<b>➕ Установить AmneziaWG?</b>\n\nБудет установлен второй, независимый режим подключения — обычный WireGuard-based AmneziaWG без VK-обхода. Текущий WDTT не будет затронут.",
+        [[btn("➕ Да, установить", f"server:awg:install:confirm:{node_id}")], [btn("Отмена", f"server:view:{node_id}")]],
+    )
+
+
+@router.callback_query(F.data.startswith("server:awg:install:confirm:"))
+async def server_awg_install_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    if await reject_callback(callback):
+        return
+    node_id = callback.data.rsplit(":", 1)[1]
+    await state.update_data(node_id=node_id)
+    await state.set_state(ServerAwgInstallWizard.password)
+    await edit(
+        callback,
+        "<b>➕ Установка AmneziaWG · введите SSH-пароль</b>\n\nСообщение будет сразу удалено, пароль не сохранится.",
+        [[btn("❌ Отмена", f"server:view:{node_id}")]],
+    )
+
+
+@router.message(ServerAwgInstallWizard.password)
+async def server_awg_install_password(message: Message, state: FSMContext) -> None:
+    if await reject_message(message):
+        return
+    password = message.text or ""
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    data = await state.get_data()
+    await state.clear()
+    node_id = data["node_id"]
+    progress = await message.answer("⏳ Устанавливаю AmneziaWG (apt PPA, сборка, systemd)…\n\nЭто может занять пару минут.", parse_mode="HTML")
+    try:
+        async with SessionLocal() as session:
+            node = await session.get(ServerNode, node_id)
+        if not node:
+            await progress.edit_text("❌ Сервер не найден.")
+            return
+        command = (
+            "set -Eeuo pipefail; export DEBIAN_FRONTEND=noninteractive; "
+            "RUN=\"\"; if [ \"$(id -u)\" -ne 0 ]; then RUN=\"sudo\"; fi; "
+            "TMP=$(mktemp); "
+            "curl -fsSL -o \"$TMP\" \"https://raw.githubusercontent.com/mnmdeveloper/darktunnel/main/vkturn/install.sh\"; "
+            "chmod 700 \"$TMP\"; "
+            "$RUN \"$TMP\" awg-only; "
+            "rm -f \"$TMP\"; "
+            "if [ -f /etc/amnezia-awg/client.conf ]; then printf 'AWG_CONFIG_B64='; $RUN base64 -w0 /etc/amnezia-awg/client.conf; printf '\\n'; fi"
+        )
+        output = await ssh_run(node, password, command, timeout=600)
+        awg_config = ""
+        for line in output.splitlines():
+            if line.startswith("AWG_CONFIG_B64="):
+                import base64 as b64mod
+                try:
+                    awg_config = b64mod.b64decode(line.split("=", 1)[1]).decode("utf-8", "replace")
+                except Exception:
+                    awg_config = ""
+        if not awg_config:
+            raise RuntimeError(output[-2500:] or "Конфиг не сформирован")
+        try:
+            existing_config = decrypt_server_config(node.encrypted_config)
+        except Exception:
+            existing_config = {}
+        existing_config["awg_client_config"] = awg_config
+        encrypted = encrypt_server_config(existing_config)
+        async with SessionLocal() as session:
+            db_node = await session.get(ServerNode, node_id)
+            db_node.encrypted_config = encrypted
+            session.add(AuditLog(admin_id=message.from_user.id, action="server.awg.install", entity_type="server", entity_id=node_id))
+            await session.commit()
+        await progress.edit_text(
+            f"✅ <b>AmneziaWG установлен</b>\n\nСервер <code>{escape(node.host)}</code>.",
+            reply_markup=kb([[btn("📄 AmneziaWG конфиг", f"server:awg:{node_id}")], [btn("🖥 К серверу", f"server:view:{node_id}")]]),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        error_text = str(e)
+        if len(error_text) > 2500:
+            error_text = "…" + error_text[-2500:]
+        await progress.edit_text(
+            f"❌ <b>Установка AmneziaWG не завершена</b>\n\n<pre>{escape(error_text)}</pre>",
+            reply_markup=kb([[btn("🔁 Повторить", f"server:awg:install:ask:{node_id}")], [btn("🖥 К серверу", f"server:view:{node_id}")]]),
             parse_mode="HTML",
         )
     finally:
@@ -685,6 +788,7 @@ async def feature_page(callback: CallbackQuery) -> None:
         return
     title, description = FEATURE_TEXTS[callback.data]
     await edit(callback, f"<b>{title}</b>\n\n{description}", [home_button()])
+
 
 
 
