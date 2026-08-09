@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 4
-    MARKETING_VERSION: 0.3.0
+    CURRENT_PROJECT_VERSION: 13
+    MARKETING_VERSION: 0.7.0
 targets:
   DarkTunnel:
     type: application
@@ -46,6 +46,10 @@ targets:
       path: PacketTunnel/Info.plist
     entitlements:
       path: PacketTunnel/PacketTunnel.entitlements
+    dependencies:
+      - framework: Vendor/vk-turn-proxy-ios/WireGuardBridge/build/WireGuardTURN.xcframework
+        embed: false
+      - sdk: NetworkExtension.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.PacketTunnel
@@ -53,6 +57,20 @@ targets:
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
         APPLICATION_EXTENSION_API_ONLY: YES
+        SWIFT_OBJC_BRIDGING_HEADER: PacketTunnel/BridgeHeader.h
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/include"
+          - "$(PROJECT_DIR)/PacketTunnel"
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/build"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo/out"
+        OTHER_LDFLAGS:
+          - "-lresolv"
+          - "-lwg-go"
 
   DarkTunnelLiveActivity:
     type: app-extension
