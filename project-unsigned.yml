@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
-    CURRENT_PROJECT_VERSION: 12
-    MARKETING_VERSION: 0.6.0
+    CURRENT_PROJECT_VERSION: 13
+    MARKETING_VERSION: 0.7.0
 targets:
   DarkTunnel:
     type: application
@@ -77,11 +77,16 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/include"
+          - "$(PROJECT_DIR)/PacketTunnel"
         FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/build"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo/out"
         OTHER_LDFLAGS:
           - "-lresolv"
+          - "-lwg-go"
 
   DarkTunnelLiveActivity:
     type: app-extension
