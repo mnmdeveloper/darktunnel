@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -95,14 +95,8 @@ class ServerNode(Base):
 
 
 class ServerTransport(Base):
-    """Inventory of an already-existing server transport.
-
-    DarkTunnel does not install or configure these transports. The row only
-    records what node-agent discovered and, when needed, the encrypted client
-    material that already belongs to the existing infrastructure.
-    """
-
     __tablename__ = "server_transports"
+    __table_args__ = (UniqueConstraint("server_id", "transport_type", name="uq_server_transport_type"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     server_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), index=True)
