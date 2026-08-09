@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import ServerNode, ServerTransport
+from .server_crypto import decrypt_server_config
 
 
 TRANSPORT_TYPES = ("wdtt", "vkturn", "amneziawg2")
@@ -58,25 +59,88 @@ async def get_server_profile(session: AsyncSession, server_id: str) -> ServerPro
     ).scalars().all()
 
     transports: list[TransportProfile] = []
-    for row in rows:
-        try:
-            details = json.loads(row.details_json or "{}")
-            if not isinstance(details, dict):
+    by_type: dict[str, ServerTransport] = {row.transport_type: row for row in rows}
+
+    # Backward compatibility: existing nodes were created before ServerTransport.
+    # Do not require a migration or an app change just to describe the already
+    # working WDTT + VK Turn path. Explicit agent records override these inferred
+    # values as soon as a node-agent reports them.
+    config: dict[str, object] = {}
+    try:
+        config = decrypt_server_config(node.encrypted_config)
+    except Exception:
+        config = {}
+
+    inferred: dict[str, dict[str, object]] = {
+        "wdtt": {
+            "enabled": True,
+            "detected": True,
+            "healthy": True,
+            "host": node.host,
+            "port": node.port,
+            "interface": "wdtt0",
+            "version": "",
+            "details": {"mode": node.protocol_mode, "source": "server_profile_legacy"},
+        },
+        "vkturn": {
+            "enabled": True,
+            "detected": True,
+            "healthy": True,
+            "host": node.host,
+            "port": 56100,
+            "interface": "",
+            "version": "",
+            "details": {
+                "transport": "srtp",
+                "source": "server_profile_legacy",
+                "wrap_a_configured": bool(config.get("wrap_a_password")),
+            },
+        },
+    }
+
+    for transport_type in TRANSPORT_TYPES:
+        row = by_type.get(transport_type)
+        if row is not None:
+            try:
+                details = json.loads(row.details_json or "{}")
+                if not isinstance(details, dict):
+                    details = {}
+            except Exception:
                 details = {}
-        except Exception:
-            details = {}
+            transports.append(
+                TransportProfile(
+                    type=row.transport_type,
+                    enabled=row.enabled,
+                    detected=row.detected,
+                    healthy=row.healthy,
+                    host=row.host,
+                    port=row.port,
+                    interface=row.interface_name,
+                    version=row.version,
+                    details=details,
+                    last_seen_at=row.last_seen_at,
+                )
+            )
+            continue
+
+        item = inferred.get(transport_type)
+        if item is None:
+            # AmneziaWG is deliberately not inferred. Its presence must be
+            # positively reported by the node-agent; WDTT + VK Turn remain the
+            # minimum server-side stack.
+            continue
         transports.append(
             TransportProfile(
-                type=row.transport_type,
-                enabled=row.enabled,
-                detected=row.detected,
-                healthy=row.healthy,
-                host=row.host,
-                port=row.port,
-                interface=row.interface_name,
-                version=row.version,
-                details=details,
-                last_seen_at=row.last_seen_at,
+                type=transport_type,
+                enabled=bool(item["enabled"]),
+                detected=bool(item["detected"]),
+                healthy=bool(item["healthy"]),
+                host=str(item["host"]),
+                port=int(item["port"]) if item["port"] is not None else None,
+                interface=str(item["interface"]),
+                version=str(item["version"]),
+                details=dict(item["details"]),
+                last_seen_at=None,
             )
         )
 
