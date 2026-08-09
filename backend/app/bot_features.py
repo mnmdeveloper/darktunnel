@@ -276,8 +276,11 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
         async with SessionLocal() as session:
             session.add(AuditLog(admin_id=message.from_user.id, action="server.install", entity_type="server", entity_id=host, result="error"))
             await session.commit()
+        error_text = str(error)
+        if len(error_text) > 3000:
+            error_text = "…" + error_text[-3000:]
         await progress.edit_text(
-            f"❌ <b>Установка не завершена</b>\n\n{escape(str(error))}\n\nПароль не сохранён. Исправьте доступ к VPS и повторите установку.",
+            f"❌ <b>Установка не завершена</b>\n\n<pre>{escape(error_text)}</pre>\n\nПароль не сохранён. Исправьте доступ к VPS и повторите установку.",
             reply_markup=kb([[btn("🔁 Повторить", "server:install")], [btn("🖥 К серверам", "servers")]]),
             parse_mode="HTML",
         )
@@ -638,4 +641,5 @@ async def feature_page(callback: CallbackQuery) -> None:
         return
     title, description = FEATURE_TEXTS[callback.data]
     await edit(callback, f"<b>{title}</b>\n\n{description}", [home_button()])
+
 
