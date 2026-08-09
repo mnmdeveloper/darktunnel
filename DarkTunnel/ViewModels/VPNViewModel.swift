@@ -152,6 +152,8 @@ final class VPNViewModel: ObservableObject {
                 resolvedTransport = chosenTransport
             }
 
+            if usesAutomaticServer { selectBestServer(for: chosenTransport) }
+
             if chosenTransport == .vkTurn && !hasValidVKLink {
                 connectionError = "Добавьте ссылку VK-звонка для режима VK обход"
                 state = .disconnected
@@ -294,6 +296,24 @@ final class VPNViewModel: ObservableObject {
             let rhs = $1.latencyMilliseconds > 0 ? $1.latencyMilliseconds : Int.max
             return lhs < rhs
         } ?? servers[0]
+    }
+
+    private func selectBestServer(for transport: TransportKind) {
+        guard !servers.isEmpty else { return }
+        if transport == .amneziaWG {
+            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.isEmpty == false }
+            if let best = candidates.min(by: latencyOrder) {
+                selectedServer = best
+                return
+            }
+        }
+        if let best = servers.min(by: latencyOrder) { selectedServer = best }
+    }
+
+    private func latencyOrder(_ lhs: VPNServer, _ rhs: VPNServer) -> Bool {
+        let left = lhs.latencyMilliseconds > 0 ? lhs.latencyMilliseconds : Int.max
+        let right = rhs.latencyMilliseconds > 0 ? rhs.latencyMilliseconds : Int.max
+        return left < right
     }
 
     private func reconnectIfNeeded() {
