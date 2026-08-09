@@ -30,6 +30,7 @@ class ServerInstallResult:
     udp_listening: bool
     generated_secret: str
     output: str
+    awg_client_config: str = ""
 
 
 def validate_host(value: str) -> str:
@@ -153,6 +154,11 @@ $RUN systemctl is-active --quiet wdtt
 $RUN ip link show wdtt0 >/dev/null
 $RUN ss -lun | grep -q ":$DT_PUBLIC_PORT "
 printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
+if [ -f /etc/amnezia-awg/client.conf ]; then
+  printf 'AWG_CONFIG_B64='
+  $RUN base64 -w0 /etc/amnezia-awg/client.conf
+  printf '\n'
+fi
 '''.format(
             secret=_sh_quote(generated_secret),
             host=_sh_quote(public_host),
@@ -171,6 +177,14 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
             ) from exc
 
     values = {line.split("=", 1)[0]: line.split("=", 1)[1] for line in result.stdout.splitlines() if "=" in line}
+    awg_config = ""
+    awg_b64 = values.get("AWG_CONFIG_B64", "")
+    if awg_b64:
+        try:
+            import base64
+            awg_config = base64.b64decode(awg_b64).decode("utf-8", "replace")
+        except Exception:
+            awg_config = ""
     return ServerInstallResult(
         host=public_host,
         public_port=public_port,
@@ -179,7 +193,9 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
         udp_listening=values.get("UDP") == "1",
         generated_secret=generated_secret,
         output=result.stdout[-4000:],
+        awg_client_config=awg_config,
     )
+
 
 
 
