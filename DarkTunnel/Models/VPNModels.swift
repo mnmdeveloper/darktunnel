@@ -11,7 +11,7 @@ enum VPNConnectionState: Equatable {
         switch self {
         case .disconnected: "VPN выключен"
         case .connecting: "Подключение…"
-        case .connected: "Защищено"
+        case .connected: "Подключено"
         case .reconnecting: "Переподключение…"
         }
     }
@@ -27,33 +27,40 @@ enum VPNConnectionState: Equatable {
 
 enum TransportKind: String, CaseIterable, Identifiable {
     case automatic = "Автоматически"
-    case amneziaWG = "AmneziaWG 2.0"
-    case vkTurn = "VK TURN"
+    case amneziaWG = "AmneziaWG"
+    case vkTurn = "VK обход"
 
     var id: String { rawValue }
 
     var description: String {
         switch self {
         case .automatic:
-            return "Подбирать доступный транспорт по текущей сети"
+            return "Wi‑Fi → AmneziaWG · мобильная сеть → проверка Google и VK"
         case .amneziaWG:
-            return "Подключаться напрямую через AmneziaWG 2.0"
+            return "Прямое подключение через AmneziaWG 2.0"
         case .vkTurn:
-            return "Сначала VK TURN, затем WDTT и встроенный WireGuard"
+            return "Обход через VK-звонок"
         }
     }
 }
 
 enum SpeedMode: Int, CaseIterable, Identifiable {
-    case balanced = 3
+    case balanced = 5
     case maximum = 10
 
     var id: Int { rawValue }
 
     var title: String {
         switch self {
-        case .balanced: "Баланс"
+        case .balanced: "Стандарт"
         case .maximum: "Максимум"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .balanced: "5 соединений — режим по умолчанию"
+        case .maximum: "10 соединений — ручной максимум"
         }
     }
 }
