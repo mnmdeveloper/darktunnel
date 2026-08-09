@@ -9,19 +9,26 @@ final class VPNController: ObservableObject {
     private var manager: NETunnelProviderManager?
 
     private init() {
-        NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor in
-                self?.status = self?.manager?.connection.status ?? .invalid
-                AppLog.shared.info("VPN", "Системный статус: \(self?.status.rawValue ?? -1)")
+                guard let self else { return }
+                if let manager = notification.object as? NETunnelProviderManager, manager.localizedDescription == "DarkTunnel" {
+                    self.manager = manager
+                }
+                self.status = self.manager?.connection.status ?? .invalid
+                AppLog.shared.info("VPN", "Системный статус: \(self.status.rawValue)")
             }
         }
+        Task { await loadExistingManager() }
+    }
+
+    func restoreState() async -> (status: NEVPNStatus, transport: TransportKind?) {
+        await loadExistingManager()
+        return (status, currentTransport())
     }
 
     func prepare(transport: TransportKind, vkCallLink: String, profile: DarkTunnelServerProfile) async throws {
-        guard transport != .amneziaWG else { throw VPNControllerError.amneziaNotReady }
-
-        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-        let manager = managers.first ?? NETunnelProviderManager()
+        let manager = try await loadOrCreateManager()
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = "app.lavender3512.currant6944.PacketTunnel"
         proto.serverAddress = profile.host
@@ -32,7 +39,15 @@ final class VPNController: ObservableObject {
             "dns_servers": profile.dns
         ]
 
-        if transport == .vkTurn {
+        switch transport {
+        case .automatic:
+            throw VPNControllerError.invalidTransport
+        case .amneziaWG:
+            guard let config = profile.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines), !config.isEmpty else {
+                throw VPNControllerError.amneziaConfigUnavailable
+            }
+            providerConfiguration["awg_config"] = config
+        case .vkTurn:
             let connections = UserDefaults.standard.integer(forKey: "vkTurnConnections")
             let runtime = VKTurnRuntimeConfig(
                 host: profile.host,
@@ -40,7 +55,7 @@ final class VPNController: ObservableObject {
                 callLink: vkCallLink,
                 serverPassword: profile.wrapAPassword,
                 deviceID: VKTurnRuntimeConfig.persistentDeviceID(),
-                connections: connections > 0 ? connections : profile.connectionsMaximum
+                connections: connections > 0 ? connections : 5
             )
             guard let proxyConfig = runtime.proxyConfigJSON, !proxyConfig.isEmpty else {
                 throw VPNControllerError.invalidVKConfiguration
@@ -63,7 +78,7 @@ final class VPNController: ObservableObject {
         try await manager.loadFromPreferences()
         self.manager = manager
         self.status = manager.connection.status
-        AppLog.shared.info("VPN", "Профиль подготовлен для \(profile.host):\(profile.port)")
+        AppLog.shared.info("VPN", "Профиль подготовлен для \(profile.host):\(profile.port) через \(transport.rawValue)")
     }
 
     func connect(transport: TransportKind, vkCallLink: String, profile: DarkTunnelServerProfile) async throws {
@@ -76,8 +91,48 @@ final class VPNController: ObservableObject {
     }
 
     func disconnect() {
-        manager?.connection.stopVPNTunnel()
-        AppLog.shared.info("VPN", "Запрошено отключение")
+        if let manager {
+            manager.connection.stopVPNTunnel()
+            AppLog.shared.info("VPN", "Запрошено отключение")
+        } else {
+            Task {
+                await loadExistingManager()
+                self.manager?.connection.stopVPNTunnel()
+            }
+        }
+    }
+
+    func currentTransport() -> TransportKind? {
+        guard let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
+              let mode = proto.providerConfiguration?["mode"] as? String else { return nil }
+        switch mode {
+        case "amnezia": return .amneziaWG
+        case "vk-turn-wrap-a": return .vkTurn
+        default: return .automatic
+        }
+    }
+
+    private func loadOrCreateManager() async throws -> NETunnelProviderManager {
+        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        let manager = managers.first(where: { $0.localizedDescription == "DarkTunnel" }) ?? managers.first ?? NETunnelProviderManager()
+        self.manager = manager
+        self.status = manager.connection.status
+        return manager
+    }
+
+    private func loadExistingManager() async {
+        do {
+            let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+            if let existing = managers.first(where: { $0.localizedDescription == "DarkTunnel" }) ?? managers.first {
+                manager = existing
+                status = existing.connection.status
+            } else {
+                status = .invalid
+            }
+        } catch {
+            status = .invalid
+            AppLog.shared.warning("VPN", "Не удалось восстановить системный VPN-профиль: \(error.localizedDescription)")
+        }
     }
 
     private func waitUntilConnected(manager: NETunnelProviderManager, timeout: TimeInterval) async throws {
@@ -110,18 +165,20 @@ final class VPNController: ObservableObject {
 
 private enum VPNControllerError: LocalizedError {
     case managerUnavailable
+    case invalidTransport
     case invalidVKConfiguration
+    case amneziaConfigUnavailable
     case tunnelStoppedBeforeReady
     case connectionTimeout
-    case amneziaNotReady
 
     var errorDescription: String? {
         switch self {
         case .managerUnavailable: return "Системный VPN-профиль недоступен"
-        case .invalidVKConfiguration: return "Не удалось сформировать настройки VK TURN"
-        case .tunnelStoppedBeforeReady: return "VK TURN или WDTT отклонил подключение. Проверьте ссылку звонка"
+        case .invalidTransport: return "Не выбран транспорт VPN"
+        case .invalidVKConfiguration: return "Не удалось сформировать настройки VK обхода"
+        case .amneziaConfigUnavailable: return "Для этого сервера нет конфигурации AmneziaWG"
+        case .tunnelStoppedBeforeReady: return "VPN остановился до завершения подключения"
         case .connectionTimeout: return "Туннель не подключился за отведённое время"
-        case .amneziaNotReady: return "AmneziaWG ещё не подключён к реальному движку. Для проверки выберите VK TURN"
         }
     }
 }
