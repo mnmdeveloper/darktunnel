@@ -80,7 +80,7 @@ class ServerNode(Base):
     encrypted_config: Mapped[str] = mapped_column(Text)
     mtu: Mapped[int] = mapped_column(Integer, default=1280)
     dns: Mapped[str] = mapped_column(String(128), default="1.1.1.1")
-    balanced_connections: Mapped[int] = mapped_column(Integer, default=3)
+    balanced_connections: Mapped[int] = mapped_column(Integer, default=5)
     max_connections: Mapped[int] = mapped_column(Integer, default=10)
     max_users: Mapped[int] = mapped_column(Integer, default=0)
     published: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -168,3 +168,15 @@ class VkTurnSetting(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Announcement(Base):
+    __tablename__ = "announcements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(Text)
+    placement: Mapped[str] = mapped_column(String(32), default="home")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
