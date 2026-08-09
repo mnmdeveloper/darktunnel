@@ -8,7 +8,7 @@ from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
-from .models import ServerNode
+from .models import Announcement, ServerNode
 from .node_agent import NodeReport, apply_report, check_agent_token, generate_agent_token, put_agent_token
 from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
 from .server_profile import get_server_profile, profile_payload
@@ -56,6 +56,30 @@ async def client_recommended_server(session: AsyncSession = Depends(get_session)
     if server is None:
         raise HTTPException(status_code=503, detail="No published servers available")
     return server_payload(server)
+
+
+@app.get("/v1/announcements")
+async def client_announcements(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    rows = (
+        await session.execute(
+            select(Announcement)
+            .where(Announcement.active.is_(True))
+            .order_by(Announcement.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    return {
+        "announcements": [
+            {
+                "id": str(row.id),
+                "title": row.title,
+                "body": row.body,
+                "placement": row.placement,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in rows
+        ]
+    }
 
 
 def require_owner(x_admin_id: int = Header(alias="X-Admin-ID")) -> int:
