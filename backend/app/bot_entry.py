@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from .bot_features import router as features_router
 from .bot_management import router as management_router
+from .bot_node_status import router as node_status_router
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
@@ -27,6 +28,7 @@ def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [button("🔑 Создать ссылку", "mg:link:new")],
         [button("👥 Пользователи", "users:0"), button("🖥 Серверы", "servers")],
+        [button("📡 Состояние нод", "node:status")],
         [button("📊 Статистика", "stats")],
         [button("⚙️ Остальное", "misc")],
     ])
@@ -153,6 +155,7 @@ async def main() -> None:
     dispatcher.include_router(menu_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(features_router)
+    dispatcher.include_router(node_status_router)
     await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
