@@ -1,17 +1,29 @@
 import Foundation
 import SwiftUI
+import NetworkExtension
 
 @MainActor
 final class VPNViewModel: ObservableObject {
     @Published var state: VPNConnectionState = .disconnected
     @Published var selectedServer = VPNServer(id: UUID(), name: "", country: "", city: "", flag: "🌐", latitude: 55.7558, longitude: 37.6173, latencyMilliseconds: 0)
-    @Published var usesAutomaticServer = true
-    @Published var speedMode: SpeedMode = .maximum
-    @Published var preferredTransport: TransportKind = .automatic
-    @Published var disconnectOnSleep = false
-    @Published var reconnectAfterWake = true
-    @Published var routeAPNsThroughVPN = false
-    @Published var connectivity = ConnectivitySnapshot(hasNetworkPath: true, vk: .unknown, google: .unknown, checkedAt: Date())
+    @Published var usesAutomaticServer = UserDefaults.standard.object(forKey: "usesAutomaticServer") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(usesAutomaticServer, forKey: "usesAutomaticServer") }
+    }
+    @Published var speedMode: SpeedMode = SpeedMode(rawValue: UserDefaults.standard.integer(forKey: "speedMode")) ?? .balanced {
+        didSet { UserDefaults.standard.set(speedMode.rawValue, forKey: "speedMode") }
+    }
+    @Published var preferredTransport: TransportKind = .automatic {
+        didSet { UserDefaults.standard.set(preferredTransport.rawValue, forKey: "preferredTransport") }
+    }
+    @Published var disconnectOnSleep = UserDefaults.standard.bool(forKey: "disconnectOnSleep") {
+        didSet { UserDefaults.standard.set(disconnectOnSleep, forKey: "disconnectOnSleep") }
+    }
+    @Published var reconnectAfterWake = UserDefaults.standard.object(forKey: "reconnectAfterWake") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(reconnectAfterWake, forKey: "reconnectAfterWake") }
+    }
+    @Published var routeAPNsThroughVPN = UserDefaults.standard.bool(forKey: "routeAPNsThroughVPN") {
+        didSet { UserDefaults.standard.set(routeAPNsThroughVPN, forKey: "routeAPNsThroughVPN") }
+    }
     @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
@@ -23,12 +35,27 @@ final class VPNViewModel: ObservableObject {
     @Published private(set) var servers: [VPNServer] = []
     @Published private(set) var isRefreshingServers = false
     @Published private(set) var isMeasuringLatency = false
+    @Published private(set) var connectivity = ConnectivitySnapshot(
+        hasNetworkPath: true,
+        networkKind: .other,
+        vk: .unknown,
+        google: .unknown,
+        checkedAt: Date()
+    )
+    @Published private(set) var resolvedTransport: TransportKind = .amneziaWG
 
     private var remoteServers: [UUID: RemoteVPNServer] = [:]
+    private var wasConnectedBeforeSleep = false
 
-    init() { restoreLocalServers() }
+    init() {
+        if let raw = UserDefaults.standard.string(forKey: "preferredTransport"), let value = TransportKind(rawValue: raw) {
+            preferredTransport = value
+        }
+        restoreLocalServers()
+        Task { await restoreSystemState() }
+    }
 
-    var networkName: String { "Текущая сеть" }
+    var networkName: String { connectivity.networkKind.rawValue }
     var selectedRemoteServer: RemoteVPNServer? { remoteServers[selectedServer.id] }
 
     var serverDisplayName: String {
@@ -37,22 +64,25 @@ final class VPNViewModel: ObservableObject {
     }
 
     var activeTransport: TransportKind {
-        switch preferredTransport {
-        case .automatic: return .vkTurn
-        case .amneziaWG: return .amneziaWG
-        case .vkTurn: return .vkTurn
-        }
+        preferredTransport == .automatic ? resolvedTransport : preferredTransport
     }
 
     var statusDetail: String {
         switch state {
-        case .disconnected: return connectionError ?? "Готов к подключению"
-        case .connecting: return activeTransport == .vkTurn ? "Подключаемся к VK TURN и через него открываем WDTT" : "Подключаем AmneziaWG"
+        case .disconnected:
+            return connectionError ?? connectivity.summary
+        case .connecting:
+            return activeTransport == .vkTurn ? "Подключаем VK обход" : "Подключаем AmneziaWG"
         case .connected:
-            if isMeasuringLatency { return "\(activeTransport.rawValue) · измеряем задержку" }
-            return selectedServer.latencyMilliseconds > 0 ? "\(activeTransport.rawValue) · \(selectedServer.latencyMilliseconds) мс" : activeTransport.rawValue
-        case .reconnecting: return "Переключаем сервер"
+            if isMeasuringLatency { return "Проверяем пинг…" }
+            return connectivity.summary
+        case .reconnecting:
+            return "Переподключение через \(activeTransport.rawValue)"
         }
+    }
+
+    var pingText: String {
+        selectedServer.latencyMilliseconds > 0 ? "\(selectedServer.latencyMilliseconds) мс" : "—"
     }
 
     private var normalizedVKLink: String { vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -68,7 +98,12 @@ final class VPNViewModel: ObservableObject {
         UserDefaults.standard.set(vkCallLink, forKey: "vkCallLink")
     }
 
-    func refreshConnectivity() { Task { connectivity = await ConnectivityDiagnostics.shared.run() } }
+    func refreshConnectivity() {
+        Task {
+            connectivity = await ConnectivityDiagnostics.shared.run()
+            if preferredTransport == .automatic { resolvedTransport = connectivity.recommendedTransport }
+        }
+    }
 
     func refreshServers() async {
         guard !isRefreshingServers else { return }
@@ -107,9 +142,18 @@ final class VPNViewModel: ObservableObject {
             }
             if usesAutomaticServer { selectBestLocalServer() }
 
-            let chosenTransport = activeTransport
+            connectivity = await ConnectivityDiagnostics.shared.run()
+            let chosenTransport: TransportKind
+            if preferredTransport == .automatic {
+                chosenTransport = connectivity.recommendedTransport
+                resolvedTransport = chosenTransport
+            } else {
+                chosenTransport = preferredTransport
+                resolvedTransport = chosenTransport
+            }
+
             if chosenTransport == .vkTurn && !hasValidVKLink {
-                connectionError = "Вставьте ссылку VK-звонка вида https://vk.ru/call/join/..."
+                connectionError = "Добавьте ссылку VK-звонка для режима VK обход"
                 state = .disconnected
                 return
             }
@@ -121,7 +165,7 @@ final class VPNViewModel: ObservableObject {
                 return
             }
 
-            UserDefaults.standard.set(speedMode == .balanced ? profile.connectionsBalanced : profile.connectionsMaximum, forKey: "vkTurnConnections")
+            UserDefaults.standard.set(speedMode.rawValue, forKey: "vkTurnConnections")
 
             do {
                 try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: normalizedVKLink, profile: profile)
@@ -136,7 +180,7 @@ final class VPNViewModel: ObservableObject {
                     await refreshServers()
                 }
             } catch {
-                connectionError = "Не удалось запустить VPN: \(error.localizedDescription)"
+                connectionError = "Не удалось подключиться: \(error.localizedDescription)"
                 state = .disconnected
                 AppLog.shared.error("VPN", error.localizedDescription)
             }
@@ -149,8 +193,36 @@ final class VPNViewModel: ObservableObject {
         LiveActivityController.shared.end()
     }
 
+    func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            wasConnectedBeforeSleep = state == .connected
+            if disconnectOnSleep && wasConnectedBeforeSleep { disconnect() }
+        case .active:
+            if wasConnectedBeforeSleep && reconnectAfterWake && state == .disconnected {
+                wasConnectedBeforeSleep = false
+                connect()
+            }
+        default:
+            break
+        }
+    }
+
+    func restoreSystemState() async {
+        let restored = await VPNController.shared.restoreState()
+        switch restored.status {
+        case .connected, .reasserting, .connecting:
+            if let transport = restored.transport { resolvedTransport = transport }
+            state = restored.status == .connected ? .connected : .connecting
+            await refreshServers()
+            await measureTunnelLatency()
+        default:
+            break
+        }
+    }
+
     func handleDeepLink(_ url: URL) {
-        guard url.scheme == "darktunnel", url.host == "disconnect" else { return }
+        guard url.scheme?.lowercased() == "darktunnel", url.host?.lowercased() == "disconnect" else { return }
         disconnect()
     }
 
@@ -193,7 +265,7 @@ final class VPNViewModel: ObservableObject {
         let updated = VPNServer(id: selectedServer.id, name: selectedServer.name, country: selectedServer.country, city: selectedServer.city, flag: selectedServer.flag, latitude: selectedServer.latitude, longitude: selectedServer.longitude, latencyMilliseconds: latency)
         selectedServer = updated
         if let index = servers.firstIndex(where: { $0.id == updated.id }) { servers[index] = updated }
-        AppLog.shared.info("Latency", "Задержка туннеля: \(latency) мс")
+        AppLog.shared.info("Latency", "Пинг туннеля: \(latency) мс")
     }
 
     private func restoreLocalServers() {
@@ -210,7 +282,9 @@ final class VPNViewModel: ObservableObject {
         if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) {
             selectedServer = existing
             if previousLatency > 0 { updateSelectedLatency(previousLatency) }
-        } else { selectBestLocalServer() }
+        } else {
+            selectBestLocalServer()
+        }
     }
 
     private func selectBestLocalServer() {
@@ -224,7 +298,11 @@ final class VPNViewModel: ObservableObject {
 
     private func reconnectIfNeeded() {
         guard state == .connected else { return }
-        disconnect()
-        connect()
+        state = .reconnecting
+        VPNController.shared.disconnect()
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            connect()
+        }
     }
 }
