@@ -8,6 +8,7 @@ from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
 from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
+from .server_profile import get_server_profile, profile_payload
 from .services import create_activation, redeem_activation
 
 
@@ -19,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DarkTunnel Backend", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="DarkTunnel Backend", version="0.4.1", lifespan=lifespan)
 app.include_router(admin_management_router)
 
 
@@ -58,6 +59,19 @@ def require_owner(x_admin_id: int = Header(alias="X-Admin-ID")) -> int:
     if x_admin_id != get_settings().telegram_owner_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     return x_admin_id
+
+
+@app.get("/v1/admin/servers/{server_id}/profile")
+async def admin_server_profile(
+    server_id: str,
+    session: AsyncSession = Depends(get_session),
+    admin_id: int = Depends(require_owner),
+) -> dict[str, object]:
+    _ = admin_id
+    profile = await get_server_profile(session, server_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+    return profile_payload(profile)
 
 
 @app.post("/v1/admin/activations", response_model=ActivationCreated)
