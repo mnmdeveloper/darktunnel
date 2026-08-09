@@ -18,6 +18,7 @@ struct RemoteVPNServer: Codable, Identifiable, Equatable {
     let dns: String
     let latencyMS: Int?
     let online: Bool
+    let amneziaConfig: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, city, latitude, longitude, host, port, mode, mtu, dns, online
@@ -27,17 +28,19 @@ struct RemoteVPNServer: Codable, Identifiable, Equatable {
         case connectionsBalanced = "connections_balanced"
         case connectionsMaximum = "connections_maximum"
         case latencyMS = "latency_ms"
+        case amneziaConfig = "amnezia_config"
     }
 
     var displayModel: VPNServer {
-        VPNServer(
+        let capital = CapitalCoordinates.forCountry(countryCode)
+        return VPNServer(
             id: UUID(uuidString: id) ?? Self.stableUUID(for: host, port: port),
             name: name,
             country: countryName.isEmpty ? name : countryName,
             city: city.isEmpty ? name : city,
             flag: Self.flag(for: countryCode),
-            latitude: latitude ?? 55.7558,
-            longitude: longitude ?? 37.6173,
+            latitude: capital?.latitude ?? latitude ?? 55.7558,
+            longitude: capital?.longitude ?? longitude ?? 37.6173,
             latencyMilliseconds: latencyMS ?? 0
         )
     }
@@ -51,7 +54,8 @@ struct RemoteVPNServer: Codable, Identifiable, Equatable {
             connectionsBalanced: connectionsBalanced,
             connectionsMaximum: connectionsMaximum,
             mtu: mtu,
-            dns: dns
+            dns: dns,
+            amneziaConfig: amneziaConfig
         )
     }
 
@@ -73,7 +77,8 @@ struct RemoteVPNServer: Codable, Identifiable, Equatable {
             mtu: profile.mtu,
             dns: profile.dns,
             latencyMS: nil,
-            online: true
+            online: true,
+            amneziaConfig: profile.amneziaConfig
         )
     }
 
@@ -111,7 +116,7 @@ enum ServerDirectoryError: LocalizedError {
 }
 
 enum ServerDirectoryCache {
-    private static let account = "server-directory-v1"
+    private static let account = "server-directory-v2"
 
     static func load() -> [RemoteVPNServer] {
         guard let value = KeychainStore.readString(account: account),
@@ -154,5 +159,46 @@ actor ServerDirectoryClient {
         let result = try JSONDecoder().decode(ServerListEnvelope.self, from: data)
         guard !result.servers.isEmpty else { throw ServerDirectoryError.noServers }
         return result.servers
+    }
+}
+
+enum CapitalCoordinates {
+    private static let values: [String: (Double, Double)] = [
+        "NL": (52.3676, 4.9041),
+        "DE": (52.5200, 13.4050),
+        "FR": (48.8566, 2.3522),
+        "GB": (51.5074, -0.1278),
+        "US": (38.9072, -77.0369),
+        "CA": (45.4215, -75.6972),
+        "FI": (60.1699, 24.9384),
+        "SE": (59.3293, 18.0686),
+        "NO": (59.9139, 10.7522),
+        "DK": (55.6761, 12.5683),
+        "PL": (52.2297, 21.0122),
+        "CZ": (50.0755, 14.4378),
+        "AT": (48.2082, 16.3738),
+        "CH": (46.9480, 7.4474),
+        "BE": (50.8503, 4.3517),
+        "IE": (53.3498, -6.2603),
+        "ES": (40.4168, -3.7038),
+        "IT": (41.9028, 12.4964),
+        "PT": (38.7223, -9.1393),
+        "TR": (39.9334, 32.8597),
+        "AE": (24.4539, 54.3773),
+        "IL": (31.7683, 35.2137),
+        "JP": (35.6762, 139.6503),
+        "SG": (1.3521, 103.8198),
+        "AU": (-35.2809, 149.1300),
+        "BR": (-15.7975, -47.8919),
+        "AR": (-34.6037, -58.3816),
+        "KZ": (51.1694, 71.4491),
+        "GE": (41.7151, 44.8271),
+        "AM": (40.1872, 44.5152),
+        "RU": (55.7558, 37.6173)
+    ]
+
+    static func `forCountry`(_ code: String) -> (latitude: Double, longitude: Double)? {
+        guard let value = values[code.uppercased()] else { return nil }
+        return (value.0, value.1)
     }
 }
