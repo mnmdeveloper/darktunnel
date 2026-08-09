@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
+from .bot_announcements import router as announcements_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
 from .bot_node_status import router as node_status_router
@@ -156,6 +157,7 @@ async def main() -> None:
     dispatcher.include_router(management_router)
     dispatcher.include_router(features_router)
     dispatcher.include_router(node_status_router)
+    dispatcher.include_router(announcements_router)
     await dispatcher.start_polling(bot, allowed_updates=dispatcher.resolve_used_update_types())
 
 
