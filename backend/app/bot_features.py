@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from .config import get_settings
 from .db import SessionLocal
 from .models import AuditLog, ServerHealth, ServerNode
-from .server_crypto import encrypt_server_config
+from .server_crypto import decrypt_server_config, encrypt_server_config
 from .server_onboarding import install_wdtt_node, probe_server, validate_host
 
 router = Router(name="admin-features")
@@ -223,6 +223,7 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
             "wrap_a_password": result.generated_secret,
             "ssh_host_key_sha256": probe.host_key_sha256,
             "installed_at": datetime.now(UTC).isoformat(),
+            "awg_client_config": result.awg_client_config,
         })
         async with SessionLocal() as session:
             existing = await session.scalar(select(ServerNode).where(ServerNode.host == host, ServerNode.archived_at.is_(None)))
@@ -267,9 +268,15 @@ async def server_install_password(message: Message, state: FSMContext) -> None:
             ))
             session.add(AuditLog(admin_id=message.from_user.id, action="server.install", entity_type="server", entity_id=str(node.id)))
             await session.commit()
+        awg_line = "\nAmneziaWG: настроен ✅" if result.awg_client_config else "\nAmneziaWG: не настроен ⚠️"
+        success_keyboard = []
+        if result.awg_client_config:
+            success_keyboard.append([btn("📄 AmneziaWG конфиг", f"server:awg:{node.id}")])
+        success_keyboard.append([btn("🖥 К серверам", "servers")])
+        success_keyboard.append(home_button())
         await progress.edit_text(
-            f"✅ <b>Сервер установлен и добавлен</b>\n\nАдрес: <code>{escape(host)}:{result.public_port}</code>\nWDTT: работает\nСеть: настроена\nАвтовыбор: включён\nПубликация: включена\n\nSSH-пароль не сохранён.",
-            reply_markup=kb([[btn("🖥 К серверам", "servers")], home_button()]),
+            f"✅ <b>Сервер установлен и добавлен</b>\n\nАдрес: <code>{escape(host)}:{result.public_port}</code>\nWDTT: работает\nСеть: настроена\nАвтовыбор: включён\nПубликация: включена{awg_line}\n\nSSH-пароль не сохранён.",
+            reply_markup=kb(success_keyboard),
             parse_mode="HTML",
         )
     except Exception as error:
@@ -325,15 +332,24 @@ async def server_view(callback: CallbackQuery) -> None:
     users_info = f"\nПодключений: <b>{health.active_connections}</b>" if (health and health.active_connections) else ""
     note_text = ""
 
+    has_awg = False
+    try:
+        config_data = decrypt_server_config(node.encrypted_config)
+        has_awg = bool(config_data.get("awg_client_config"))
+    except Exception:
+        pass
+
     keyboard = [
         [btn("🙈 Скрыть" if node.published else "📢 Опубликовать", f"server:publish:{node.id}")],
         [btn("✅ Снять техработы" if node.maintenance else "🛠 Техработы", f"server:maintenance:{node.id}")],
         [btn("🎯 Убрать из автовыбора" if node.auto_select else "🎯 Вернуть в автовыбор", f"server:auto:{node.id}")],
         [btn("🔄 Перезагрузить WDTT", f"server:reboot:ask:{node.id}")],
         [btn("✏️ Переименовать", f"server:rename:{node.id}"), btn("👥 Макс. пользователей", f"server:maxusers:{node.id}")],
-        [btn("🗄 Архивировать", f"server:archive:confirm:{node.id}")],
-        [btn("⬅️ К списку", "server:list")],
     ]
+    if has_awg:
+        keyboard.append([btn("📄 AmneziaWG конфиг", f"server:awg:{node.id}")])
+    keyboard.append([btn("🗄 Архивировать", f"server:archive:confirm:{node.id}")])
+    keyboard.append([btn("⬅️ К списку", "server:list")])
     await edit(
         callback,
         f"<b>🖥 {escape(node.name)}</b>\n\nАдрес: <code>{escape(node.host)}:{node.port}</code>\nСтатус: <b>{online_text}{latency}</b>{users_info}\nОпубликован: <b>{'да' if node.published else 'нет'}</b>\nАвтовыбор: <b>{'да' if node.auto_select else 'нет'}</b>\nТехработы: <b>{'да' if node.maintenance else 'нет'}</b>\nМакс. пользователей: <b>{node.max_users or '∞'}</b>{note_text}",
@@ -626,6 +642,34 @@ async def server_archive(callback: CallbackQuery) -> None:
 
 # ─── Заглушки для нереализованных разделов ─────────────────────────────────────
 
+# ─── AmneziaWG конфиг ───────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("server:awg:"))
+async def server_awg_config(callback: CallbackQuery) -> None:
+    if await reject_callback(callback):
+        return
+    node_id = callback.data.rsplit(":", 1)[1]
+    async with SessionLocal() as session:
+        node = await session.get(ServerNode, node_id)
+    if node is None:
+        await callback.answer("Сервер не найден", show_alert=True)
+        return
+    try:
+        config_data = decrypt_server_config(node.encrypted_config)
+        awg_config = config_data.get("awg_client_config", "")
+    except Exception:
+        awg_config = ""
+    if not awg_config:
+        await callback.answer("AmneziaWG не настроен на этом сервере", show_alert=True)
+        return
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(
+            f"<b>📄 AmneziaWG конфиг · {escape(node.name)}</b>\n\nИмпортируйте в приложение AmneziaWG или WireGuard:\n\n<pre>{escape(awg_config)}</pre>",
+            parse_mode="HTML",
+        )
+
+
 FEATURE_TEXTS = {
     "themes": ("🎨 Темы", "Загрузка OFF/ON-фонов, предпросмотр, публикация, скрытие и порядок изображений."),
     "announcements": ("📢 Объявления", "Баннеры в приложении: info, warning, critical, subscription; сроки, аудитория и состояния VPN."),
@@ -641,5 +685,6 @@ async def feature_page(callback: CallbackQuery) -> None:
         return
     title, description = FEATURE_TEXTS[callback.data]
     await edit(callback, f"<b>{title}</b>\n\n{description}", [home_button()])
+
 
 
