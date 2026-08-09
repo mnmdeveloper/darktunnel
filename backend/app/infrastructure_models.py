@@ -14,6 +14,7 @@ from .db import Base
 class TransportType(str, enum.Enum):
     amneziawg2 = "amneziawg2"
     wdtt = "wdtt"
+    vkturn = "vkturn"
 
 
 class OnboardingStatus(str, enum.Enum):
