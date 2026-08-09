@@ -12,12 +12,14 @@ struct DarkTunnelServerProfile: Codable, Equatable {
     let connectionsMaximum: Int
     let mtu: Int
     let dns: String
+    let amneziaConfig: String?
 
     enum CodingKeys: String, CodingKey {
         case host, port, mode, mtu, dns
         case wrapAPassword = "wrap_a_password"
         case connectionsBalanced = "connections_balanced"
         case connectionsMaximum = "connections_maximum"
+        case amneziaConfig = "amnezia_config"
     }
 }
 
