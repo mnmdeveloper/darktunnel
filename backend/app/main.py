@@ -9,7 +9,7 @@ from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
-from .models import Activation, Announcement, Device, ServerNode
+from .models import Activation, Announcement, Device, ServerHealth, ServerNode
 from .node_agent import NodeReport, apply_report, check_agent_token, generate_agent_token, put_agent_token
 from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
 from .security import decode_activation_token, hash_token
@@ -83,6 +83,7 @@ async def activation_server_profile(token: str, installation_id: str, session: A
     node = await session.scalar(select(ServerNode).where(ServerNode.host == settings.wdtt_public_host, ServerNode.archived_at.is_(None)))
     if node is None:
         raise HTTPException(status_code=503, detail="Primary server unavailable")
+    health = await session.scalar(select(ServerHealth).where(ServerHealth.server_id == node.id).order_by(ServerHealth.timestamp.desc()).limit(1))
     try:
         config = decrypt_server_config(node.encrypted_config)
     except Exception as exc:
@@ -104,6 +105,8 @@ async def activation_server_profile(token: str, installation_id: str, session: A
         "connections_maximum": node.max_connections,
         "mtu": node.mtu,
         "dns": node.dns,
+        "latency_ms": health.latency_ms if health else None,
+        "online": bool(health.online) if health else True,
         "amnezia_config": str(config.get("awg_client_config", "")) or None,
     }}
 
