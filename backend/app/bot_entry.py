@@ -15,7 +15,7 @@ from .bot_node_status import router as node_status_router
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
-from .server_crypto import encrypt_server_config
+from .server_crypto import decrypt_server_config, encrypt_server_config
 from .services import _read_wdtt_password
 
 menu_router = Router(name="main-menu")
@@ -47,13 +47,21 @@ async def ensure_primary_server() -> None:
         return
     try:
         password = _read_wdtt_password()
-        encrypted = encrypt_server_config({
-            "wrap_a_password": password,
-            "source": "existing-production-node",
-            "registered_at": datetime.now(UTC).isoformat(),
-        })
         async with SessionLocal() as session:
             node = await session.scalar(select(ServerNode).where(ServerNode.host == settings.wdtt_public_host, ServerNode.archived_at.is_(None)))
+            config: dict[str, object] = {}
+            if node is not None:
+                try:
+                    config = decrypt_server_config(node.encrypted_config)
+                except Exception:
+                    config = {}
+            config.update({
+                "wrap_a_password": password,
+                "source": config.get("source", "existing-production-node"),
+                "registered_at": config.get("registered_at", datetime.now(UTC).isoformat()),
+            })
+            encrypted = encrypt_server_config(config)
+
             if node is None:
                 node = ServerNode(
                     name="Основной сервер",
