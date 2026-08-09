@@ -98,6 +98,7 @@ def server_payload(server: ClientServer) -> dict[str, object]:
         "dns": server.dns,
         "latency_ms": server.latency_ms,
         "online": server.online,
+        "amnezia_config": str(server.config.get("awg_client_config", "")) or None,
     }
 
 
