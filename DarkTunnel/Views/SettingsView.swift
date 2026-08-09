@@ -53,7 +53,7 @@ struct SettingsView: View {
             HStack {
                 Text("СЕРВЕР").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary)
                 Spacer()
-                Text("обновлено сейчас").font(.caption2).foregroundStyle(.tertiary)
+                Text("обновлено автоматически").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 5)
             compactCard {
                 compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Приложение использует сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) { viewModel.selectAutomaticServer() }
@@ -83,10 +83,11 @@ struct SettingsView: View {
 
     private var transportSection: some View {
         compactSection("ТРАНСПОРТ") {
-            ForEach(TransportKind.allCases) { transport in
-                compactOption(icon: "point.3.connected.trianglepath.dotted", title: transport.rawValue, subtitle: transport == .automatic ? "Подбирать канал автоматически по текущей сети" : "Всегда использовать этот способ подключения", selected: viewModel.preferredTransport == transport) {
-                    viewModel.preferredTransport = transport
-                }
+            compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Использовать VK TURN → SRTP-WRAP-A → WDTT", selected: viewModel.preferredTransport == .automatic) {
+                viewModel.preferredTransport = .automatic
+            }
+            compactOption(icon: "phone.connection", title: "VK TURN", subtitle: "Использовать обход через VK-звонок и существующий WDTT-сервер", selected: viewModel.preferredTransport == .vkTurn) {
+                viewModel.preferredTransport = .vkTurn
             }
         }
     }
