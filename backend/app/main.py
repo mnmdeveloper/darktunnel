@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
+from .models import ServerNode
+from .node_agent import NodeReport, apply_report, check_agent_token, generate_agent_token, put_agent_token
 from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
 from .server_profile import get_server_profile, profile_payload
 from .services import create_activation, redeem_activation
@@ -20,7 +23,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DarkTunnel Backend", version="0.4.1", lifespan=lifespan)
+app = FastAPI(title="DarkTunnel Backend", version="0.5.0", lifespan=lifespan)
 app.include_router(admin_management_router)
 
 
@@ -61,6 +64,16 @@ def require_owner(x_admin_id: int = Header(alias="X-Admin-ID")) -> int:
     return x_admin_id
 
 
+async def get_server(session: AsyncSession, server_id: str) -> ServerNode:
+    try:
+        server = await session.scalar(select(ServerNode).where(ServerNode.id == server_id))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid server id") from exc
+    if server is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+    return server
+
+
 @app.get("/v1/admin/servers/{server_id}/profile")
 async def admin_server_profile(
     server_id: str,
@@ -72,6 +85,37 @@ async def admin_server_profile(
     if profile is None:
         raise HTTPException(status_code=404, detail="Server not found")
     return profile_payload(profile)
+
+
+@app.post("/v1/admin/servers/{server_id}/agent-token")
+async def admin_issue_agent_token(
+    server_id: str,
+    session: AsyncSession = Depends(get_session),
+    admin_id: int = Depends(require_owner),
+) -> dict[str, str]:
+    _ = admin_id
+    server = await get_server(session, server_id)
+    token = generate_agent_token()
+    try:
+        server.encrypted_config = put_agent_token(server.encrypted_config, token)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Server config encryption is unavailable") from exc
+    await session.commit()
+    return {"server_id": str(server.id), "node_agent_token": token}
+
+
+@app.post("/v1/node/{server_id}/report")
+async def node_report(
+    server_id: str,
+    body: NodeReport,
+    x_node_token: str = Header(alias="X-Node-Token"),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    server = await get_server(session, server_id)
+    if not x_node_token or not check_agent_token(server.encrypted_config, x_node_token):
+        raise HTTPException(status_code=401, detail="Invalid node token")
+    await apply_report(session, server, body)
+    return {"status": "ok", "server_id": str(server.id)}
 
 
 @app.post("/v1/admin/activations", response_model=ActivationCreated)
