@@ -12,10 +12,12 @@ final class VPNController: ObservableObject {
         NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor in
                 guard let self else { return }
-                if let manager = notification.object as? NETunnelProviderManager, manager.localizedDescription == "DarkTunnel" {
-                    self.manager = manager
+                if let session = notification.object as? NETunnelProviderSession, let changedManager = session.manager as? NETunnelProviderManager, changedManager.localizedDescription == "DarkTunnel" {
+                    self.manager = changedManager
+                    self.status = session.status
+                } else {
+                    self.status = self.manager?.connection.status ?? .invalid
                 }
-                self.status = self.manager?.connection.status ?? .invalid
                 AppLog.shared.info("VPN", "Системный статус: \(self.status.rawValue)")
             }
         }
@@ -32,34 +34,18 @@ final class VPNController: ObservableObject {
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = "app.lavender3512.currant6944.PacketTunnel"
         proto.serverAddress = profile.host
-
-        var providerConfiguration: [String: Any] = [
-            "mode": modeIdentifier(for: transport),
-            "mtu": profile.mtu,
-            "dns_servers": profile.dns
-        ]
+        var providerConfiguration: [String: Any] = ["mode": modeIdentifier(for: transport), "mtu": profile.mtu, "dns_servers": profile.dns]
 
         switch transport {
         case .automatic:
             throw VPNControllerError.invalidTransport
         case .amneziaWG:
-            guard let config = profile.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines), !config.isEmpty else {
-                throw VPNControllerError.amneziaConfigUnavailable
-            }
+            guard let config = profile.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines), !config.isEmpty else { throw VPNControllerError.amneziaConfigUnavailable }
             providerConfiguration["awg_config"] = config
         case .vkTurn:
             let connections = UserDefaults.standard.integer(forKey: "vkTurnConnections")
-            let runtime = VKTurnRuntimeConfig(
-                host: profile.host,
-                port: profile.port,
-                callLink: vkCallLink,
-                serverPassword: profile.wrapAPassword,
-                deviceID: VKTurnRuntimeConfig.persistentDeviceID(),
-                connections: connections > 0 ? connections : 5
-            )
-            guard let proxyConfig = runtime.proxyConfigJSON, !proxyConfig.isEmpty else {
-                throw VPNControllerError.invalidVKConfiguration
-            }
+            let runtime = VKTurnRuntimeConfig(host: profile.host, port: profile.port, callLink: vkCallLink, serverPassword: profile.wrapAPassword, deviceID: VKTurnRuntimeConfig.persistentDeviceID(), connections: connections > 0 ? connections : 5)
+            guard let proxyConfig = runtime.proxyConfigJSON, !proxyConfig.isEmpty else { throw VPNControllerError.invalidVKConfiguration }
             providerConfiguration["use_wrap_a"] = true
             providerConfiguration["wg_config"] = "wrap-a-provisioned"
             providerConfiguration["tunnel_address"] = "0.0.0.0/0"
@@ -95,16 +81,12 @@ final class VPNController: ObservableObject {
             manager.connection.stopVPNTunnel()
             AppLog.shared.info("VPN", "Запрошено отключение")
         } else {
-            Task {
-                await loadExistingManager()
-                self.manager?.connection.stopVPNTunnel()
-            }
+            Task { await loadExistingManager(); self.manager?.connection.stopVPNTunnel() }
         }
     }
 
     func currentTransport() -> TransportKind? {
-        guard let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
-              let mode = proto.providerConfiguration?["mode"] as? String else { return nil }
+        guard let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol, let mode = proto.providerConfiguration?["mode"] as? String else { return nil }
         switch mode {
         case "amnezia": return .amneziaWG
         case "vk-turn-wrap-a": return .vkTurn
@@ -126,9 +108,7 @@ final class VPNController: ObservableObject {
             if let existing = managers.first(where: { $0.localizedDescription == "DarkTunnel" }) ?? managers.first {
                 manager = existing
                 status = existing.connection.status
-            } else {
-                status = .invalid
-            }
+            } else { status = .invalid }
         } catch {
             status = .invalid
             AppLog.shared.warning("VPN", "Не удалось восстановить системный VPN-профиль: \(error.localizedDescription)")
@@ -144,8 +124,7 @@ final class VPNController: ObservableObject {
             switch current {
             case .connected: return
             case .connecting, .reasserting, .disconnecting: observedStart = true
-            case .disconnected, .invalid:
-                if observedStart { throw VPNControllerError.tunnelStoppedBeforeReady }
+            case .disconnected, .invalid: if observedStart { throw VPNControllerError.tunnelStoppedBeforeReady }
             @unknown default: break
             }
             try await Task.sleep(for: .milliseconds(400))
@@ -164,13 +143,7 @@ final class VPNController: ObservableObject {
 }
 
 private enum VPNControllerError: LocalizedError {
-    case managerUnavailable
-    case invalidTransport
-    case invalidVKConfiguration
-    case amneziaConfigUnavailable
-    case tunnelStoppedBeforeReady
-    case connectionTimeout
-
+    case managerUnavailable, invalidTransport, invalidVKConfiguration, amneziaConfigUnavailable, tunnelStoppedBeforeReady, connectionTimeout
     var errorDescription: String? {
         switch self {
         case .managerUnavailable: return "Системный VPN-профиль недоступен"
