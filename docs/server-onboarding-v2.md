@@ -2,9 +2,18 @@
 
 ## Goal
 
-Adding a VPN server from Telegram must require only a short wizard. The backend
-must discover and register all compatible transports automatically without
-breaking a working WDTT or AmneziaWG installation.
+Adding a VPN server from Telegram must require only a short wizard. DarkTunnel
+must discover and register the VPN transports that already exist on the VPS.
+It must not install, configure, replace, or restart the VPN stack.
+
+Supported existing transports are:
+
+- AmneziaWG 2.0;
+- WDTT;
+- VK Turn proxy.
+
+DarkTunnel is the control plane/catalog. The VPS remains the owner of its VPN
+configuration and runtime.
 
 ## Telegram wizard
 
@@ -18,26 +27,24 @@ The administrator supplies:
 6. Authentication: password or private key.
 
 The password/private key is kept only for the onboarding job and must not be
-stored in the `servers` table or written to audit logs. A future secret-manager
-integration may retain an encrypted deployment credential when automatic remote
-updates are enabled explicitly.
+stored in the `servers` table or written to audit logs.
 
 ## Automatic actions
 
 After the administrator confirms the wizard, backend must:
 
 1. Verify the SSH host key and show its fingerprint on first connection.
-2. Upload or execute the versioned one-command node installer from this repo.
-3. Detect public IPv4/domain automatically when possible.
-4. Detect existing AmneziaWG 2.0 and WDTT installations.
-5. Leave existing transport configuration and services untouched.
-6. Install/update the localhost-only DarkTunnel node agent.
-7. Register the server in the backend.
-8. Create one transport record for every detected transport.
-9. Enable the server and detected transports for auto-selection.
-10. Run end-to-end health checks before publishing.
-11. Publish only transports that pass health checks.
-12. Return a concise report to Telegram.
+2. Install/update only the localhost-only DarkTunnel node agent.
+3. Detect existing AmneziaWG, WDTT and VK Turn installations.
+4. Read runtime state without modifying their configuration.
+5. Register the server in the backend.
+6. Create one transport record for every detected transport.
+7. Publish only transports that pass the available health checks.
+8. Return a concise discovery report to Telegram.
+
+The onboarding process must not install or update AmneziaWG, WDTT or VK Turn.
+It must not restart `wdtt`, `wdtt-firewall`, `awg-quick@*`, `wg-quick@*`, or a
+VK Turn container/process.
 
 ## One-command node installation
 
@@ -47,7 +54,7 @@ After merge to `main`:
 curl -fsSL https://raw.githubusercontent.com/mnmdeveloper/darktunnel/main/deploy/node-installer/install.sh | sudo bash -s -- install
 ```
 
-Update without changing or restarting existing VPN transports:
+Update the read-only agent without changing VPN transports:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mnmdeveloper/darktunnel/main/deploy/node-installer/install.sh | sudo bash -s -- update
@@ -59,8 +66,31 @@ Status:
 sudo bash /opt/darktunnel-node/install.sh status
 ```
 
-During branch testing, replace `main` with `server-onboarding-v2` or set
-`DARKTUNNEL_BRANCH=server-onboarding-v2`.
+During branch testing, replace `main` with `server-profile-safe`.
+
+## Node agent contract
+
+The agent listens only on `127.0.0.1:8787` and exposes read-only endpoints:
+
+- `GET /health` — agent health;
+- `GET /v1/status` — node identity plus transport discovery;
+- `GET /v1/transports` — transport discovery only.
+
+Every response has `schema_version`. Current schema version is `1`.
+
+The agent reports, where available:
+
+- detection state;
+- runtime/service state;
+- interface;
+- listening port;
+- public key;
+- peer count and latest handshake for AmneziaWG;
+- WDTT service/firewall/interface state;
+- VK Turn process/container/listening-port state.
+
+The agent never returns private keys, SSH credentials, WDTT master password,
+or VPN private configuration.
 
 ## Compatibility rule
 
@@ -68,39 +98,31 @@ The installer is additive and idempotent:
 
 - it does not delete or replace `/etc/wdtt`;
 - it does not delete or replace AmneziaWG/WireGuard configs;
-- it does not restart `wdtt`, `wdtt-firewall`, `awg-quick@*`, or `wg-quick@*`;
+- it does not install or replace VPN binaries;
+- it does not restart existing VPN transports;
 - it binds the management API to `127.0.0.1`;
 - it generates a unique management token with mode `0600`;
 - repeated `install`/`update` runs preserve node identity and token.
 
-## Client delivery contract
+## Backend records
 
-Opening a DarkTunnel activation link must be enough for the app. After redeeming
-the link, the client downloads:
-
-- subscription/license state;
-- published servers;
-- all enabled transports for every server;
-- per-device AmneziaWG peer configuration;
-- per-device WDTT configuration;
-- Network Strategy remote configuration;
-- health/probe endpoints and minimum compatible versions.
-
-No master WDTT credential, SSH password, SSH private key, or server-side private
-key may be returned to the client.
-
-## Planned backend records
-
-`servers` remains the geographic/logical node. Transport-specific data moves to
-`server_transports`:
+`servers` remains the geographic/logical node. Transport-specific data is
+represented by `server_transports`:
 
 - `server_id`;
-- `type`: `amneziawg2` or `wdtt`;
+- `type`: `amneziawg2`, `wdtt`, or `vkturn`;
 - `enabled`, `published`, `auto_select`;
 - `host`, `port`, `mtu`, `dns`;
-- encrypted server configuration;
-- detected version and compatibility range;
+- encrypted transport configuration only where the existing client contract
+  requires it;
+- detected version;
 - last health state.
 
-This is introduced with a migration and compatibility adapter so the existing
-single `protocol_mode` server rows continue to work until converted.
+The existing `ServerNode.protocol_mode` and legacy configuration remain for
+compatibility. They are not removed in this phase.
+
+## Critical safety rule
+
+A successful DarkTunnel onboarding must leave a working VPS working exactly as
+it was before onboarding. If discovery fails, the correct action is to report
+failure — not to attempt to repair the VPN automatically.
