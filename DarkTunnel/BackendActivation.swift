@@ -61,7 +61,6 @@ enum ActivationClientError: LocalizedError {
     case invalidLink
     case invalidResponse
     case server(String)
-
     var errorDescription: String? {
         switch self {
         case .invalidLink: return "Неверная ссылка активации"
@@ -76,20 +75,13 @@ actor DarkTunnelActivationClient {
     private let endpoint = URL(string: "https://api.31-77-148-80.sslip.io/v1/activation/redeem")!
 
     func redeem(token: String) async throws -> DarkTunnelActivationResponse {
-        let requestBody = ActivationRequest(
-            token: token,
-            installationID: DeviceIdentity.installationID,
-            publicKey: DeviceIdentity.activationPublicKey,
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
-            iosVersion: UIDevice.current.systemVersion
-        )
+        let requestBody = ActivationRequest(token: token, installationID: DeviceIdentity.installationID, publicKey: DeviceIdentity.activationPublicKey, appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", iosVersion: UIDevice.current.systemVersion)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONEncoder().encode(requestBody)
-
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ActivationClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
@@ -98,9 +90,7 @@ actor DarkTunnelActivationClient {
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let result = try? decoder.decode(DarkTunnelActivationResponse.self, from: data) else {
-            throw ActivationClientError.invalidResponse
-        }
+        guard let result = try? decoder.decode(DarkTunnelActivationResponse.self, from: data) else { throw ActivationClientError.invalidResponse }
         return result
     }
 }
@@ -108,14 +98,12 @@ actor DarkTunnelActivationClient {
 enum DeviceIdentity {
     private static let installationKey = "darktunnel.installation-id"
     private static let publicKeyKey = "darktunnel.activation-public-key"
-
     static var installationID: String {
         if let existing = UserDefaults.standard.string(forKey: installationKey) { return existing }
         let value = UUID().uuidString.lowercased()
         UserDefaults.standard.set(value, forKey: installationKey)
         return value
     }
-
     static var activationPublicKey: String {
         if let existing = KeychainStore.readString(account: publicKeyKey) { return existing }
         var bytes = [UInt8](repeating: 0, count: 32)
@@ -128,7 +116,6 @@ enum DeviceIdentity {
 
 enum KeychainStore {
     private static let service = "app.lavender3512.currant6944.activation"
-
     static func writeString(_ value: String, account: String) throws {
         let data = Data(value.utf8)
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
@@ -139,20 +126,12 @@ enum KeychainStore {
         let status = SecItemAdd(insert as CFDictionary, nil)
         guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
     }
-
     static func readString(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
-
     static func delete(account: String) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)
@@ -162,7 +141,6 @@ enum KeychainStore {
 @MainActor
 final class ActivationStore: ObservableObject {
     static let shared = ActivationStore()
-
     @Published private(set) var isActivated = UserDefaults.standard.bool(forKey: "hasCompletedActivation")
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
@@ -172,13 +150,12 @@ final class ActivationStore: ObservableObject {
     private let profileAccount = "server-profile"
     private let expirationKey = "darktunnel.subscription-expiration"
     private let refreshTokenAccount = "refresh-token"
+    private let activationTokenAccount = "activation-token"
 
     init() { restoreLocalState() }
 
     func handle(url: URL) {
-        guard url.scheme?.lowercased() == "darktunnel", url.host?.lowercased() == "activate",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let token = components.queryItems?.first(where: { $0.name == "d" })?.value, !token.isEmpty else {
+        guard url.scheme?.lowercased() == "darktunnel", url.host?.lowercased() == "activate", let components = URLComponents(url: url, resolvingAgainstBaseURL: false), let token = components.queryItems?.first(where: { $0.name == "d" })?.value, !token.isEmpty else {
             errorMessage = ActivationClientError.invalidLink.localizedDescription
             AppLog.shared.warning("Activation", "Получена неверная ссылка активации")
             return
@@ -195,7 +172,7 @@ final class ActivationStore: ObservableObject {
         do {
             AppLog.shared.info("Activation", "Запрос к backend начат")
             let result = try await DarkTunnelActivationClient.shared.redeem(token: token)
-            try persist(result)
+            try persist(result, token: token)
             subscriptionExpiresAt = result.subscriptionExpiresAt
             serverProfile = result.server
             isActivated = true
@@ -212,14 +189,16 @@ final class ActivationStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: expirationKey)
         KeychainStore.delete(account: profileAccount)
         KeychainStore.delete(account: refreshTokenAccount)
+        KeychainStore.delete(account: activationTokenAccount)
         isActivated = false
         subscriptionExpiresAt = nil
         serverProfile = nil
         AppLog.shared.info("Activation", "Локальная активация сброшена")
     }
 
-    private func persist(_ result: DarkTunnelActivationResponse) throws {
+    private func persist(_ result: DarkTunnelActivationResponse, token: String) throws {
         try KeychainStore.writeString(result.refreshToken, account: refreshTokenAccount)
+        try KeychainStore.writeString(token, account: activationTokenAccount)
         let profileData = try JSONEncoder().encode(result.server)
         guard let profileString = String(data: profileData, encoding: .utf8) else { throw ActivationClientError.invalidResponse }
         try KeychainStore.writeString(profileString, account: profileAccount)
@@ -228,9 +207,7 @@ final class ActivationStore: ObservableObject {
 
     private func restoreLocalState() {
         subscriptionExpiresAt = UserDefaults.standard.object(forKey: expirationKey) as? Date
-        if let profileString = KeychainStore.readString(account: profileAccount), let data = profileString.data(using: .utf8) {
-            serverProfile = try? JSONDecoder().decode(DarkTunnelServerProfile.self, from: data)
-        }
+        if let profileString = KeychainStore.readString(account: profileAccount), let data = profileString.data(using: .utf8) { serverProfile = try? JSONDecoder().decode(DarkTunnelServerProfile.self, from: data) }
         if let expiration = subscriptionExpiresAt, expiration <= Date() {
             isActivated = false
             UserDefaults.standard.set(false, forKey: "hasCompletedActivation")
@@ -244,7 +221,6 @@ final class ActivationStore: ObservableObject {
 struct BackendActivationView: View {
     @EnvironmentObject private var activation: ActivationStore
     @State private var pastedLink = ""
-
     var body: some View {
         ZStack {
             LinearGradient(colors: [.black, Color(red: 0.05, green: 0.08, blue: 0.13)], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
@@ -253,26 +229,15 @@ struct BackendActivationView: View {
                 Image(systemName: "shield.lefthalf.filled").font(.system(size: 72, weight: .semibold)).foregroundStyle(.white)
                 Text("DarkTunnel").font(.largeTitle.bold())
                 Text("Откройте ссылку доступа из Telegram или вставьте её ниже").foregroundStyle(.secondary).multilineTextAlignment(.center)
-                TextField("darktunnel://activate?d=…", text: $pastedLink)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).padding(14)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                TextField("darktunnel://activate?d=…", text: $pastedLink).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).padding(14).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 Button {
-                    guard let url = URL(string: pastedLink.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-                        activation.errorMessage = ActivationClientError.invalidLink.localizedDescription
-                        return
-                    }
+                    guard let url = URL(string: pastedLink.trimmingCharacters(in: .whitespacesAndNewlines)) else { activation.errorMessage = ActivationClientError.invalidLink.localizedDescription; return }
                     activation.handle(url: url)
                 } label: {
-                    HStack {
-                        if activation.isLoading { ProgressView().tint(.black) }
-                        Text(activation.isLoading ? "Активация…" : "Активировать").fontWeight(.semibold)
-                    }.frame(maxWidth: .infinity).padding(.vertical, 14)
+                    HStack { if activation.isLoading { ProgressView().tint(.black) }; Text(activation.isLoading ? "Активация…" : "Активировать").fontWeight(.semibold) }.frame(maxWidth: .infinity).padding(.vertical, 14)
                 }
-                .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black)
-                .disabled(activation.isLoading || pastedLink.isEmpty)
-                if let error = activation.errorMessage {
-                    Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
-                }
+                .buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black).disabled(activation.isLoading || pastedLink.isEmpty)
+                if let error = activation.errorMessage { Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center) }
                 Spacer()
             }.padding(24)
         }.preferredColorScheme(.dark)
