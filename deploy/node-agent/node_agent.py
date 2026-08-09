@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 CONFIG_PATH = Path(os.getenv("DARKTUNNEL_NODE_CONFIG", "/etc/darktunnel-node/node.json"))
+AGENT_VERSION = "0.3.0"
+SCHEMA_VERSION = 1
 
 
 def run(*command: str, timeout: int = 5) -> tuple[int, str]:
@@ -37,6 +39,19 @@ def interface_names() -> list[str]:
         return []
 
 
+def listen_ports() -> set[int]:
+    code, output = run("ss", "-H", "-lntu", timeout=5)
+    if code != 0:
+        return set()
+    ports: set[int] = set()
+    for match in re.finditer(r":(\d+)\s", output):
+        try:
+            ports.add(int(match.group(1)))
+        except ValueError:
+            pass
+    return ports
+
+
 def command_version(path: str | None) -> str:
     if not path:
         return ""
@@ -52,6 +67,13 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def find_first(paths: list[Path]) -> str:
+    for path in paths:
+        if path.is_file():
+            return str(path)
+    return ""
 
 
 def awg_status() -> dict[str, Any]:
@@ -81,7 +103,15 @@ def awg_status() -> dict[str, Any]:
                 if len(parts) == 2 and parts[1].isdigit():
                     latest_handshake = max(latest_handshake, int(parts[1]))
     service = systemd_state(f"awg-quick@{interface}.service") if interface else "inactive"
-    detected = bool(awg or awg_quick or interface or metadata)
+    config_path = str(metadata.get("config_path") or "")
+    if not config_path:
+        config_path = find_first([
+            Path("/etc/amnezia/awg/awg0.conf"),
+            Path("/etc/amnezia/amneziawg/awg0.conf"),
+            Path("/etc/wireguard/awg0.conf"),
+            Path("/etc/wireguard/wg0.conf"),
+        ])
+    detected = bool(awg or awg_quick or interface or metadata or config_path)
     online = detected and bool(interface) and service == "active" and port > 0
     return {
         "detected": detected,
@@ -96,7 +126,7 @@ def awg_status() -> dict[str, Any]:
         "address": metadata.get("address", ""),
         "network": metadata.get("network", ""),
         "version": command_version(awg),
-        "config_path": metadata.get("config_path", ""),
+        "config_path": config_path,
     }
 
 
@@ -106,7 +136,7 @@ def parse_env_port(path: Path) -> int:
             if "=" not in line or line.lstrip().startswith("#"):
                 continue
             key, value = line.split("=", 1)
-            if key.strip() in {"WDTT_PUBLIC_PORT", "WDTT_PORT", "PORT"}:
+            if key.strip() in {"WDTT_PUBLIC_PORT", "WDTT_WG_PORT", "WDTT_PORT", "PORT"}:
                 match = re.search(r"\d+", value)
                 if match:
                     return int(match.group())
@@ -119,25 +149,70 @@ def wdtt_status() -> dict[str, Any]:
     candidates = [Path("/etc/wdtt/wdtt.env"), Path("/opt/wdtt/wdtt.env")]
     paths = [path for path in candidates if path.exists()]
     service = systemd_state("wdtt.service")
+    firewall = systemd_state("wdtt-firewall.service")
+    interfaces = interface_names()
     port = next((parse_env_port(path) for path in paths if parse_env_port(path)), 0)
-    detected = bool(paths) or service == "active"
+    detected = bool(paths) or service == "active" or "wdtt0" in interfaces
+    online = detected and service == "active" and "wdtt0" in interfaces
     return {
         "detected": detected,
-        "online": detected and service == "active" and "wdtt0" in interface_names(),
+        "online": online,
         "service": service,
-        "firewall_service": systemd_state("wdtt-firewall.service"),
-        "interface_present": "wdtt0" in interface_names(),
+        "firewall_service": firewall,
+        "interface_present": "wdtt0" in interfaces,
         "env_paths": [str(path) for path in paths],
         "port": port or 56000,
     }
 
 
+def vkturn_status() -> dict[str, Any]:
+    process_code, process_output = run("pgrep", "-af", "vk-turn-proxy", timeout=5)
+    docker_code, docker_output = (127, "")
+    if shutil.which("docker"):
+        docker_code, docker_output = run("docker", "ps", "--format", "{{.Names}}\\t{{.Status}}", timeout=5)
+    containers: list[str] = []
+    if docker_code == 0:
+        containers = [line.split("\t", 1)[0] for line in docker_output.splitlines() if line.strip()]
+    container = next((name for name in containers if "vkturn" in name.lower() or "vk-turn" in name.lower()), "")
+    process = process_code == 0 and bool(process_output)
+    listening = 56100 in listen_ports()
+    detected = bool(container or process or listening)
+    online = detected and (bool(container) or process or listening)
+    return {
+        "detected": detected,
+        "online": online,
+        "container": container,
+        "process": process,
+        "port": 56100,
+        "listening": listening,
+    }
+
+
 def snapshot(config: dict[str, Any]) -> dict[str, Any]:
-    return {"status":"ok","node_id":config.get("node_id", ""),"name":config.get("name", ""),"country":config.get("country", ""),"city":config.get("city", ""),"public_host":config.get("public_host", ""),"transports":{"amneziawg2":awg_status(),"wdtt":wdtt_status()}}
+    transports = {
+        "amneziawg2": awg_status(),
+        "wdtt": wdtt_status(),
+        "vkturn": vkturn_status(),
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "ok",
+        "node_id": config.get("node_id", ""),
+        "name": config.get("name", ""),
+        "country": config.get("country", ""),
+        "city": config.get("city", ""),
+        "public_host": config.get("public_host", ""),
+        "agent": {"version": AGENT_VERSION},
+        "transports": transports,
+        "relations": {
+            "vkturn_wraps_wdtt": bool(transports["vkturn"]["online"] and transports["wdtt"]["online"]),
+            "amneziawg_present": bool(transports["amneziawg2"]["detected"]),
+        },
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "DarkTunnelNode/0.2"
+    server_version = "DarkTunnelNode/0.3"
 
     @property
     def config(self) -> dict[str, Any]:
@@ -157,11 +232,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
-            self.send_json(HTTPStatus.OK, {"status": "ok"})
+            self.send_json(HTTPStatus.OK, {"status": "ok", "schema_version": SCHEMA_VERSION, "agent_version": AGENT_VERSION})
         elif not self.authorized():
             self.send_json(HTTPStatus.UNAUTHORIZED, {"detail": "unauthorized"})
         elif self.path == "/v1/status":
             self.send_json(HTTPStatus.OK, snapshot(self.config))
+        elif self.path == "/v1/transports":
+            payload = snapshot(self.config)
+            self.send_json(HTTPStatus.OK, {"schema_version": SCHEMA_VERSION, "transports": payload["transports"], "relations": payload["relations"]})
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"detail": "not found"})
 
