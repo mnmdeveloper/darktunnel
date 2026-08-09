@@ -48,6 +48,7 @@ jobs:
         working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
         run: |
           set -euo pipefail
+          chmod -R u+rwX .
           make clean
           make xcframework
           test -d build/WireGuardTURN.xcframework
@@ -55,8 +56,12 @@ jobs:
 
       - name: Build AmneziaWG Apple bridge
         working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
+        env:
+          TMPDIR: ${{ runner.temp }}/tmp
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
+          chmod -R u+rwX .
           python3 - <<'PY'
           from pathlib import Path
           path = Path('api-apple.go')
