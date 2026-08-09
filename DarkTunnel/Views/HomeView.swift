@@ -25,7 +25,10 @@ struct HomeView: View {
         }
         .background(.black)
         .sheet(isPresented: $showingSettings) { SettingsView().environmentObject(viewModel) }
-        .onAppear(perform: moveCamera)
+        .onAppear {
+            moveCamera()
+            Task { await viewModel.refreshServers() }
+        }
         .onChange(of: viewModel.selectedServer) { _, _ in moveCamera() }
     }
 
@@ -48,7 +51,7 @@ struct HomeView: View {
 
             HStack(spacing: 8) {
                 metric(icon: "calendar", title: daysRemaining, subtitle: "до окончания")
-                metric(icon: "server.rack", title: "\(viewModel.servers.count)", subtitle: "сохранено серверов")
+                metric(icon: "server.rack", title: "\(viewModel.servers.count)", subtitle: "доступно серверов")
                 Button { Task { await viewModel.refreshServers() } } label: {
                     Group {
                         if viewModel.isRefreshingServers { ProgressView().tint(.white) }
@@ -58,8 +61,8 @@ struct HomeView: View {
                     .background(accent.opacity(0.28), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(viewModel.state != .connected || viewModel.isRefreshingServers)
-                .opacity(viewModel.state == .connected ? 1 : 0.45)
+                .disabled(viewModel.isRefreshingServers)
+                .opacity(viewModel.isRefreshingServers ? 0.45 : 1)
             }
         }
         .padding(14)
