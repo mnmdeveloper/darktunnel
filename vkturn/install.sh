@@ -75,7 +75,7 @@ USAGE
 parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      install|status|logs|link|uninstall) ACTION="$1"; shift ;;
+      install|status|logs|link|uninstall|awg-only) ACTION="$1"; shift ;;
       -h|--help|help) usage; exit 0 ;;
       --password) require_arg "$@"; PASSWORD="${2:-}"; PASSWORD_SET=1; shift 2 ;;
       --password=*) PASSWORD="${1#*=}"; PASSWORD_SET=1; shift ;;
@@ -818,6 +818,21 @@ uninstall_wdtt() {
 
 link_only() { load_env_file; validate_inputs; validate_password; print_ios_link; }
 
+awg_only() {
+  need_root
+  detect_os
+  install_amneziawg
+  if [ -f "$AWG_LINK_FILE" ]; then
+    printf '\n'
+    log "AmneziaWG client config:"
+    printf '\n'
+    cat "$AWG_LINK_FILE"
+    printf '\n'
+  else
+    die "AmneziaWG installation did not produce a client config."
+  fi
+}
+
 main() {
   parse_args "$@"
   case "$ACTION" in
@@ -826,6 +841,7 @@ main() {
     logs) logs_wdtt ;;
     link) link_only ;;
     uninstall) uninstall_wdtt ;;
+    awg-only) awg_only ;;
     *) die "Unsupported action: $ACTION" ;;
   esac
 }
@@ -833,4 +849,5 @@ main() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi
+
 
