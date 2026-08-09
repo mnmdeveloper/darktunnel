@@ -567,6 +567,141 @@ print_ios_link() {
   printf 'wdtt://%s:%s:%s:9000:%s:%s\n' "$host" "$DTLS_PORT" "$WG_PORT" "$PASSWORD" "$hash"
   printf '\n'
   log "In the iOS app use SRTP-WRAP-A mode if importing manually."
+  if [ -f "$AWG_LINK_FILE" ]; then
+    printf '\n'
+    log "AmneziaWG (plain, no VK obfuscation) client config:"
+    printf '\n'
+    cat "$AWG_LINK_FILE"
+    printf '\n'
+    log "Import this .conf directly into the AmneziaWG / WireGuard app."
+  fi
+}
+
+AWG_PORT="${WDTT_AWG_PORT:-51900}"
+AWG_SUBNET="10.79.0.0/24"
+AWG_SERVER_IP="10.79.0.1"
+AWG_CLIENT_IP="10.79.0.2"
+AWG_CONFIG_DIR="/etc/amnezia-awg"
+AWG_LINK_FILE="$AWG_CONFIG_DIR/client.conf"
+
+detect_wan_iface() {
+  ip -4 route show default | awk '{for(i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}' | head -n1
+}
+
+install_amneziawg_packages() {
+  case "$PKG_MGR" in
+    apt)
+      if ! command -v add-apt-repository >/dev/null 2>&1; then
+        apt-get install -y software-properties-common
+      fi
+      add-apt-repository -y ppa:amnezia/ppa
+      apt-get update -y
+      apt-get install -y amneziawg amneziawg-tools
+      ;;
+    *)
+      log "AmneziaWG automatic install is only wired up for apt-based systems. Skipping."
+      return 1
+      ;;
+  esac
+}
+
+install_amneziawg() {
+  log "Setting up AmneziaWG (second, non-obfuscated connection mode)..."
+  if ! install_amneziawg_packages; then
+    log "AmneziaWG packages were not installed; skipping this mode."
+    return 0
+  fi
+
+  mkdir -p "$AWG_CONFIG_DIR"
+  chmod 700 "$AWG_CONFIG_DIR"
+
+  local server_key_file="$AWG_CONFIG_DIR/server.key"
+  local server_pub_file="$AWG_CONFIG_DIR/server.pub"
+  local client_key_file="$AWG_CONFIG_DIR/client.key"
+  local client_pub_file="$AWG_CONFIG_DIR/client.pub"
+
+  if [ ! -s "$server_key_file" ]; then
+    umask 077
+    awg genkey > "$server_key_file"
+  fi
+  awg pubkey < "$server_key_file" > "$server_pub_file"
+
+  if [ ! -s "$client_key_file" ]; then
+    umask 077
+    awg genkey > "$client_key_file"
+  fi
+  awg pubkey < "$client_key_file" > "$client_pub_file"
+
+  local wan_iface
+  wan_iface="$(detect_wan_iface)"
+  [ -n "$wan_iface" ] || die "Could not detect the default WAN interface for AmneziaWG NAT rules."
+
+  local server_key server_pub client_key client_pub
+  server_key="$(cat "$server_key_file")"
+  server_pub="$(cat "$server_pub_file")"
+  client_key="$(cat "$client_key_file")"
+  client_pub="$(cat "$client_pub_file")"
+
+  # Junk-packet / obfuscation parameters recommended by the AmneziaWG project.
+  local jc=4 jmin=40 jmax=70 s1=0 s2=0 h1=1 h2=2 h3=3 h4=4
+
+  cat > "$AWG_CONFIG_DIR/awg0.conf" <<EOF
+[Interface]
+Address = $AWG_SERVER_IP/24
+ListenPort = $AWG_PORT
+PrivateKey = $server_key
+Jc = $jc
+Jmin = $jmin
+Jmax = $jmax
+S1 = $s1
+S2 = $s2
+H1 = $h1
+H2 = $h2
+H3 = $h3
+H4 = $h4
+PostUp = iptables -C FORWARD -i awg0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i awg0 -j ACCEPT
+PostUp = iptables -C FORWARD -o awg0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -o awg0 -j ACCEPT
+PostUp = iptables -t nat -C POSTROUTING -s $AWG_SUBNET -o $wan_iface -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $AWG_SUBNET -o $wan_iface -j MASQUERADE
+PostDown = iptables -D FORWARD -i awg0 -j ACCEPT 2>/dev/null || true
+PostDown = iptables -D FORWARD -o awg0 -j ACCEPT 2>/dev/null || true
+PostDown = iptables -t nat -D POSTROUTING -s $AWG_SUBNET -o $wan_iface -j MASQUERADE 2>/dev/null || true
+
+[Peer]
+PublicKey = $client_pub
+AllowedIPs = $AWG_CLIENT_IP/32
+EOF
+  chmod 600 "$AWG_CONFIG_DIR/awg0.conf"
+  mkdir -p /etc/amnezia/amneziawg
+  cp -f "$AWG_CONFIG_DIR/awg0.conf" /etc/amnezia/amneziawg/awg0.conf
+  chmod 600 /etc/amnezia/amneziawg/awg0.conf
+
+  systemctl enable --now awg-quick@awg0.service
+
+  local host
+  host="$(detect_public_host || true)"
+  cat > "$AWG_LINK_FILE" <<EOF
+[Interface]
+PrivateKey = $client_key
+Address = $AWG_CLIENT_IP/32
+DNS = 1.1.1.1, 1.0.0.1
+Jc = $jc
+Jmin = $jmin
+Jmax = $jmax
+S1 = $s1
+S2 = $s2
+H1 = $h1
+H2 = $h2
+H3 = $h3
+H4 = $h4
+
+[Peer]
+PublicKey = $server_pub
+Endpoint = ${host:-$PUBLIC_HOST}:$AWG_PORT
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+EOF
+  chmod 600 "$AWG_LINK_FILE"
+  log "AmneziaWG client config written to $AWG_LINK_FILE"
 }
 
 install_wdtt() {
@@ -590,6 +725,7 @@ install_wdtt() {
   write_runtime_script
   write_systemd_units
   start_services
+  install_amneziawg
   print_ios_link
 }
 
@@ -697,3 +833,4 @@ main() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   main "$@"
 fi
+
