@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var viewModel: VPNViewModel
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var announcements = AnnouncementStore.shared
     @AppStorage("subscriptionLink") private var subscriptionLink = ""
     @State private var showingSubscriptionEditor = false
 
@@ -39,22 +40,13 @@ struct SettingsView: View {
         .sheet(isPresented: $showingSubscriptionEditor) {
             subscriptionEditor.presentationDetents([.height(250)]).presentationBackground(.ultraThinMaterial)
         }
+        .task { await announcements.refresh() }
     }
 
     private var speedSection: some View {
         compactSection("СКОРОСТЬ") {
-            compactOption(
-                icon: "speedometer",
-                title: "Стандарт",
-                subtitle: "5 соединений — режим по умолчанию",
-                selected: viewModel.speedMode == .balanced
-            ) { viewModel.speedMode = .balanced }
-            compactOption(
-                icon: "bolt.fill",
-                title: "Максимум",
-                subtitle: "10 соединений — включается только вручную",
-                selected: viewModel.speedMode == .maximum
-            ) { viewModel.speedMode = .maximum }
+            compactOption(icon: "speedometer", title: "Стандарт", subtitle: "5 соединений — режим по умолчанию", selected: viewModel.speedMode == .balanced) { viewModel.speedMode = .balanced }
+            compactOption(icon: "bolt.fill", title: "Максимум", subtitle: "10 соединений — включается только вручную", selected: viewModel.speedMode == .maximum) { viewModel.speedMode = .maximum }
         }
     }
 
@@ -65,6 +57,18 @@ struct SettingsView: View {
                 Spacer()
                 Text("обновлено автоматически").font(.caption2).foregroundStyle(.tertiary)
             }.padding(.horizontal, 5)
+            if let announcement = announcements.servers.first {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "megaphone.fill").foregroundStyle(Color(red: 0.37, green: 0.47, blue: 0.58))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(announcement.title).font(.caption.weight(.bold))
+                        Text(announcement.body).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            }
             compactCard {
                 compactOption(icon: "wand.and.stars", title: "Автовыбор", subtitle: "Выбираем сервер с минимальной задержкой", selected: viewModel.usesAutomaticServer) { viewModel.selectAutomaticServer() }
             }
@@ -93,16 +97,9 @@ struct SettingsView: View {
 
     private var transportSection: some View {
         compactSection("ТРАНСПОРТ") {
-            compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Wi‑Fi → AmneziaWG · мобильная сеть → Google/VK проверка", selected: viewModel.preferredTransport == .automatic) {
-                viewModel.preferredTransport = .automatic
-                viewModel.refreshConnectivity()
-            }
-            compactOption(icon: "shield.lefthalf.filled", title: "AmneziaWG", subtitle: "Всегда использовать AmneziaWG", selected: viewModel.preferredTransport == .amneziaWG) {
-                viewModel.preferredTransport = .amneziaWG
-            }
-            compactOption(icon: "phone.fill", title: "VK обход", subtitle: "Всегда использовать обход через VK-звонок", selected: viewModel.preferredTransport == .vkTurn) {
-                viewModel.preferredTransport = .vkTurn
-            }
+            compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Wi‑Fi → AmneziaWG · мобильная сеть → Google/VK проверка", selected: viewModel.preferredTransport == .automatic) { viewModel.preferredTransport = .automatic; viewModel.refreshConnectivity() }
+            compactOption(icon: "shield.lefthalf.filled", title: "AmneziaWG", subtitle: "Всегда использовать AmneziaWG", selected: viewModel.preferredTransport == .amneziaWG) { viewModel.preferredTransport = .amneziaWG }
+            compactOption(icon: "phone.fill", title: "VK обход", subtitle: "Всегда использовать обход через VK-звонок", selected: viewModel.preferredTransport == .vkTurn) { viewModel.preferredTransport = .vkTurn }
         }
     }
 
