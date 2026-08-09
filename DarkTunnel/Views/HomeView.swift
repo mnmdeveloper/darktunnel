@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var viewModel: VPNViewModel
+    @StateObject private var announcements = AnnouncementStore.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var camera: MapCameraPosition = .automatic
     @State private var showingSettings = false
 
@@ -11,25 +13,35 @@ struct HomeView: View {
 
     var body: some View {
         ZStack {
-            Map(position: $camera, interactionModes: [])
-                .mapStyle(.standard(elevation: .flat, emphasis: .muted))
+            Map(position: $camera, interactionModes: [.pan, .zoom, .rotate])
+                .mapStyle(.standard(elevation: .realistic, emphasis: .muted))
                 .ignoresSafeArea()
-            LinearGradient(colors: [.black.opacity(0.3), .clear, .black.opacity(0.86)], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: [.black.opacity(0.28), .clear, .black.opacity(0.90)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 header.padding(.horizontal, 16).padding(.top, 8)
-                Spacer(minLength: 24)
+                Spacer(minLength: 12)
+                if let announcement = announcements.home.first {
+                    announcementCard(announcement)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                }
                 connectionPanel.padding(.horizontal, 16).padding(.bottom, 18)
             }
         }
         .background(.black)
         .sheet(isPresented: $showingSettings) { SettingsView().environmentObject(viewModel) }
         .onAppear {
-            moveCamera()
-            Task { await viewModel.refreshServers() }
+            moveCamera(animated: false)
+            Task {
+                await viewModel.refreshServers()
+                viewModel.refreshConnectivity()
+                await announcements.refresh()
+            }
         }
-        .onChange(of: viewModel.selectedServer) { _, _ in moveCamera() }
+        .onChange(of: viewModel.selectedServer) { _, _ in moveCamera(animated: true) }
+        .onChange(of: scenePhase) { _, phase in viewModel.handleScenePhase(phase) }
     }
 
     private var header: some View {
@@ -51,8 +63,8 @@ struct HomeView: View {
 
             HStack(spacing: 8) {
                 metric(icon: "calendar", title: daysRemaining, subtitle: "до окончания")
-                metric(icon: "server.rack", title: "\(viewModel.servers.count)", subtitle: "доступно серверов")
-                Button { Task { await viewModel.refreshServers() } } label: {
+                metric(icon: "server.rack", title: "\(viewModel.servers.count)", subtitle: "серверов")
+                Button { Task { await viewModel.refreshServers(); await announcements.refresh() } } label: {
                     Group {
                         if viewModel.isRefreshingServers { ProgressView().tint(.white) }
                         else { Image(systemName: "arrow.clockwise") }
@@ -62,7 +74,6 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.isRefreshingServers)
-                .opacity(viewModel.isRefreshingServers ? 0.45 : 1)
             }
         }
         .padding(14)
@@ -84,9 +95,10 @@ struct HomeView: View {
                         .lineLimit(3)
                 }
                 Spacer()
-                Text(viewModel.activeTransport.rawValue).font(.caption2).foregroundStyle(.secondary)
+                Text(viewModel.activeTransport.rawValue).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
 
+            pingPanel
             Divider().overlay(.white.opacity(0.08))
 
             VStack(alignment: .leading, spacing: 7) {
@@ -114,10 +126,46 @@ struct HomeView: View {
                 .background(.white, in: RoundedRectangle(cornerRadius: 18))
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.servers.isEmpty)
+            .disabled(viewModel.servers.isEmpty || viewModel.state == .connecting || viewModel.state == .reconnecting)
         }
         .padding(16)
-        .background(panel.opacity(0.9), in: RoundedRectangle(cornerRadius: 28))
+        .background(panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 28))
+    }
+
+    private var pingPanel: some View {
+        HStack(spacing: 8) {
+            pill(icon: "location.fill", title: viewModel.selectedServer.flag, subtitle: viewModel.selectedServer.country.isEmpty ? "Сервер" : viewModel.selectedServer.country)
+            pill(icon: "timer", title: viewModel.pingText, subtitle: "пинг")
+            pill(icon: "antenna.radiowaves.left.and.right", title: viewModel.networkName, subtitle: viewModel.activeTransport.rawValue)
+        }
+    }
+
+    private func announcementCard(_ announcement: DarkTunnelAnnouncement) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "megaphone.fill").foregroundStyle(accent)
+                .frame(width: 34, height: 34).background(accent.opacity(0.15), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(announcement.title).font(.subheadline.weight(.bold))
+                Text(announcement.body).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(13)
+        .background(panel.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
+        .overlay { RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.07), lineWidth: 1) }
+    }
+
+    private func pill(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon).font(.caption.weight(.semibold)).foregroundStyle(accent)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.caption.weight(.semibold)).lineLimit(1)
+                Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
     }
 
     private func metric(icon: String, title: String, subtitle: String) -> some View {
@@ -141,11 +189,16 @@ struct HomeView: View {
         return "\(days) дн."
     }
 
-    private func moveCamera() {
+    private func moveCamera(animated: Bool) {
         guard !viewModel.servers.isEmpty else { return }
-        camera = .region(MKCoordinateRegion(
+        let region = MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: viewModel.selectedServer.latitude, longitude: viewModel.selectedServer.longitude),
-            span: MKCoordinateSpan(latitudeDelta: 0.34, longitudeDelta: 0.34)
-        ))
+            span: MKCoordinateSpan(latitudeDelta: 18, longitudeDelta: 18)
+        )
+        if animated {
+            withAnimation(.easeInOut(duration: 1.1)) { camera = .region(region) }
+        } else {
+            camera = .region(region)
+        }
     }
 }
