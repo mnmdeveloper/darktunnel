@@ -128,8 +128,17 @@ async def install_wdtt_node(
 
         # Password is passed only to this process over the encrypted SSH channel.
         # It is never persisted by the control plane or returned in bot messages.
+        # NOTE: SSH servers frequently reject/ignore `env=` in exec requests unless
+        # AcceptEnv is explicitly configured, so values are shell-quoted and inlined
+        # into the script instead of relying on connection.run(..., env=...).
+        def _sh_quote(value: str) -> str:
+            return "'" + value.replace("'", "'\\''") + "'"
+
         command = r'''set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
+DT_SECRET={secret}
+DT_PUBLIC_HOST={host}
+DT_PUBLIC_PORT={port}
 sudo -n true 2>/dev/null || true
 RUN=""
 if [ "$(id -u)" -ne 0 ]; then RUN="sudo"; fi
@@ -144,19 +153,22 @@ $RUN systemctl is-active --quiet wdtt
 $RUN ip link show wdtt0 >/dev/null
 $RUN ss -lun | grep -q ":$DT_PUBLIC_PORT "
 printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
-'''
-        result = await asyncio.wait_for(
-            connection.run(
-                command,
-                check=True,
-                env={
-                    "DT_SECRET": generated_secret,
-                    "DT_PUBLIC_HOST": public_host,
-                    "DT_PUBLIC_PORT": str(public_port),
-                },
-            ),
-            timeout=1500,
+'''.format(
+            secret=_sh_quote(generated_secret),
+            host=_sh_quote(public_host),
+            port=_sh_quote(str(public_port)),
         )
+        try:
+            result = await asyncio.wait_for(
+                connection.run(command, check=True),
+                timeout=1500,
+            )
+        except asyncssh.ProcessError as exc:
+            tail_out = (exc.stdout or "")[-2500:]
+            tail_err = (exc.stderr or "")[-2500:]
+            raise RuntimeError(
+                f"exit_status={exc.exit_status}\n--- stdout (tail) ---\n{tail_out}\n--- stderr (tail) ---\n{tail_err}"
+            ) from exc
 
     values = {line.split("=", 1)[0]: line.split("=", 1)[1] for line in result.stdout.splitlines() if "=" in line}
     return ServerInstallResult(
@@ -168,5 +180,6 @@ printf 'SERVICE=1\nINTERFACE=1\nUDP=1\n'
         generated_secret=generated_secret,
         output=result.stdout[-4000:],
     )
+
 
 
