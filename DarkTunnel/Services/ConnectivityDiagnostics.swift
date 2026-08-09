@@ -8,7 +8,16 @@ struct ConnectivitySnapshot: Equatable {
         case unknown
     }
 
+    enum NetworkKind: String {
+        case wifi = "Wi‑Fi"
+        case cellular = "Мобильная сеть"
+        case wired = "Проводная сеть"
+        case other = "Сеть"
+        case unavailable = "Нет сети"
+    }
+
     let hasNetworkPath: Bool
+    let networkKind: NetworkKind
     let vk: ServiceState
     let google: ServiceState
     let checkedAt: Date
@@ -16,14 +25,23 @@ struct ConnectivitySnapshot: Equatable {
     var recommendedTransport: TransportKind {
         guard hasNetworkPath else { return .automatic }
 
-        switch (vk, google) {
-        case (.reachable, .blocked):
-            return .vkTurn
-        case (.reachable, .reachable), (.blocked, .reachable):
+        switch networkKind {
+        case .wifi, .wired:
             return .amneziaWG
-        case (.blocked, .blocked), (.unknown, .unknown):
-            return .vkTurn
-        default:
+        case .cellular:
+            switch (google, vk) {
+            case (.blocked, .reachable):
+                return .vkTurn
+            case (.reachable, .reachable):
+                return .amneziaWG
+            case (.reachable, .blocked):
+                return .amneziaWG
+            case (.blocked, .blocked):
+                return .vkTurn
+            default:
+                return .amneziaWG
+            }
+        case .other, .unavailable:
             return .amneziaWG
         }
     }
@@ -31,17 +49,24 @@ struct ConnectivitySnapshot: Equatable {
     var summary: String {
         guard hasNetworkPath else { return "Нет доступа к сети" }
 
-        switch (vk, google) {
-        case (.reachable, .reachable):
-            return "VK и внешний интернет доступны"
-        case (.reachable, .blocked):
-            return "VK доступен, внешний интернет ограничен — нужен режим VK TURN"
-        case (.blocked, .reachable):
-            return "Внешний интернет доступен, VK недоступен"
-        case (.blocked, .blocked):
-            return "Сервисы недоступны — проверим режим VK TURN"
-        default:
-            return "Доступность сервисов определяется"
+        switch networkKind {
+        case .wifi, .wired:
+            return "\(networkKind.rawValue) · используем AmneziaWG"
+        case .cellular:
+            switch (google, vk) {
+            case (.blocked, .reachable):
+                return "Google недоступен, VK доступен · используем VK обход"
+            case (.reachable, .reachable):
+                return "Google и VK доступны · используем AmneziaWG"
+            case (.reachable, .blocked):
+                return "Google доступен, VK ограничен · используем AmneziaWG"
+            case (.blocked, .blocked):
+                return "Google и VK недоступны · пробуем VK обход"
+            default:
+                return "Проверяем доступность Google и VK"
+            }
+        case .other, .unavailable:
+            return "Проверяем доступность сети"
         }
     }
 }
@@ -61,15 +86,28 @@ actor ConnectivityDiagnostics {
     }
 
     func run() async -> ConnectivitySnapshot {
-        let hasPath = await hasSatisfiedPath()
-        guard hasPath else {
-            return ConnectivitySnapshot(hasNetworkPath: false, vk: .unknown, google: .unknown, checkedAt: Date())
+        let path = await currentPath()
+        guard path.status == .satisfied else {
+            return ConnectivitySnapshot(
+                hasNetworkPath: false,
+                networkKind: .unavailable,
+                vk: .unknown,
+                google: .unknown,
+                checkedAt: Date()
+            )
         }
 
         async let vkState = probe(url: URL(string: "https://vk.com/favicon.ico")!)
-        async let googleState = probe(url: URL(string: "https://www.gstatic.com/generate_204")!)
+        async let googleState = probe(url: URL(string: "https://www.google.com/generate_204")!)
+        let (vk, google) = await (vkState, googleState)
 
-        return await ConnectivitySnapshot(hasNetworkPath: true, vk: vkState, google: googleState, checkedAt: Date())
+        return ConnectivitySnapshot(
+            hasNetworkPath: true,
+            networkKind: networkKind(for: path),
+            vk: vk,
+            google: google,
+            checkedAt: Date()
+        )
     }
 
     private func probe(url: URL) async -> ConnectivitySnapshot.ServiceState {
@@ -86,20 +124,22 @@ actor ConnectivityDiagnostics {
         }
     }
 
-    private func hasSatisfiedPath() async -> Bool {
+    private func currentPath() async -> NWPath {
         await withCheckedContinuation { continuation in
             let monitor = NWPathMonitor()
             let queue = DispatchQueue(label: "DarkTunnel.ConnectivityDiagnostics.Path")
-            var resumed = false
-
             monitor.pathUpdateHandler = { path in
-                guard !resumed else { return }
-                resumed = true
                 monitor.cancel()
-                continuation.resume(returning: path.status == .satisfied)
+                continuation.resume(returning: path)
             }
-
             monitor.start(queue: queue)
         }
+    }
+
+    private func networkKind(for path: NWPath) -> ConnectivitySnapshot.NetworkKind {
+        if path.usesInterfaceType(.wifi) { return .wifi }
+        if path.usesInterfaceType(.cellular) { return .cellular }
+        if path.usesInterfaceType(.wiredEthernet) { return .wired }
+        return .other
     }
 }
