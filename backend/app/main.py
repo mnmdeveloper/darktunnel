@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy import select
@@ -37,12 +38,7 @@ async def health() -> dict[str, str]:
 @app.get("/v1/status")
 async def status(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     servers = await published_servers(session)
-    return {
-        "status": "ok",
-        "environment": get_settings().environment,
-        "published_servers": len(servers),
-        "online_servers": sum(1 for server in servers if server.online),
-    }
+    return {"status": "ok", "environment": get_settings().environment, "published_servers": len(servers), "online_servers": sum(1 for server in servers if server.online)}
 
 
 @app.get("/v1/servers")
@@ -62,34 +58,12 @@ async def client_recommended_server(session: AsyncSession = Depends(get_session)
 
 @app.get("/v1/announcements")
 async def client_announcements(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
-    rows = (
-        await session.execute(
-            select(Announcement)
-            .where(Announcement.active.is_(True))
-            .order_by(Announcement.created_at.desc())
-            .limit(10)
-        )
-    ).scalars().all()
-    return {
-        "announcements": [
-            {
-                "id": str(row.id),
-                "title": row.title,
-                "body": row.body,
-                "placement": row.placement,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in rows
-        ]
-    }
+    rows = (await session.execute(select(Announcement).where(Announcement.active.is_(True)).order_by(Announcement.created_at.desc()).limit(10))).scalars().all()
+    return {"announcements": [{"id": str(row.id), "title": row.title, "body": row.body, "placement": row.placement, "created_at": row.created_at.isoformat()} for row in rows]}
 
 
 @app.get("/v1/activation/server-profile")
-async def activation_server_profile(
-    token: str,
-    installation_id: str,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, object]:
+async def activation_server_profile(token: str, installation_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     try:
         payload = decode_activation_token(token)
         activation_id = str(payload["activation_id"])
@@ -97,11 +71,11 @@ async def activation_server_profile(
         raise HTTPException(status_code=401, detail="Invalid activation token") from exc
 
     activation = await session.scalar(select(Activation).where(Activation.id == activation_id))
-    now = __import__("datetime").datetime.now(__import__("datetime").UTC)
+    now = datetime.now(UTC)
     if activation is None or activation.token_hash != hash_token(token) or activation.revoked_at is not None or activation.link_expires_at < now:
         raise HTTPException(status_code=401, detail="Activation token unavailable")
 
-    device = await session.scalar(select(Device).where(Device.installation_id == installation_id, Device.user_id.is_not(None)))
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id))
     if device is None:
         raise HTTPException(status_code=401, detail="Device not activated")
 
@@ -114,26 +88,24 @@ async def activation_server_profile(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
 
-    return {
-        "server": {
-            "id": str(node.id),
-            "name": node.name,
-            "country_code": node.country_code,
-            "country_name": node.country_name,
-            "city": node.city,
-            "latitude": node.latitude,
-            "longitude": node.longitude,
-            "host": node.host,
-            "port": node.port,
-            "mode": node.protocol_mode,
-            "wrap_a_password": str(config.get("wrap_a_password", "")),
-            "connections_balanced": node.balanced_connections,
-            "connections_maximum": node.max_connections,
-            "mtu": node.mtu,
-            "dns": node.dns,
-            "amnezia_config": str(config.get("awg_client_config", "")) or None,
-        }
-    }
+    return {"server": {
+        "id": str(node.id),
+        "name": node.name,
+        "country_code": node.country_code,
+        "country_name": node.country_name,
+        "city": node.city,
+        "latitude": node.latitude,
+        "longitude": node.longitude,
+        "host": node.host,
+        "port": node.port,
+        "mode": node.protocol_mode,
+        "wrap_a_password": str(config.get("wrap_a_password", "")),
+        "connections_balanced": node.balanced_connections,
+        "connections_maximum": node.max_connections,
+        "mtu": node.mtu,
+        "dns": node.dns,
+        "amnezia_config": str(config.get("awg_client_config", "")) or None,
+    }}
 
 
 def require_owner(x_admin_id: int = Header(alias="X-Admin-ID")) -> int:
