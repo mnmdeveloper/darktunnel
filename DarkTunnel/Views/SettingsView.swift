@@ -86,7 +86,7 @@ struct SettingsView: View {
             compactOption(icon: "wand.and.stars", title: "Автоматически", subtitle: "Использовать VK TURN → SRTP-WRAP-A → WDTT", selected: viewModel.preferredTransport == .automatic) {
                 viewModel.preferredTransport = .automatic
             }
-            compactOption(icon: "phone.connection", title: "VK TURN", subtitle: "Использовать обход через VK-звонок и существующий WDTT-сервер", selected: viewModel.preferredTransport == .vkTurn) {
+            compactOption(icon: "phone.fill", title: "VK TURN", subtitle: "Использовать обход через VK-звонок и существующий WDTT-сервер", selected: viewModel.preferredTransport == .vkTurn) {
                 viewModel.preferredTransport = .vkTurn
             }
         }
