@@ -77,6 +77,9 @@ jobs:
           REAL_GOROOT="$(go env GOROOT)"
           mkdir -p "$GOROOT_COPY"
           rsync -a --delete --exclude=pkg/obj/go-build "$REAL_GOROOT/" "$GOROOT_COPY/"
+          # rsync preserves the read-only mode bits from Apple's Go toolchain.
+          # The runtime patch must modify files in the copied GOROOT.
+          chmod -R u+rwX "$GOROOT_COPY"
 
           python3 - "$GOROOT_COPY" <<'PY'
           import sys
@@ -98,7 +101,6 @@ jobs:
           for rel, pairs in replacements.items():
               path = root / rel
               text = path.read_text()
-              original = text
               for old, new in pairs:
                   if old not in text:
                       raise SystemExit(f"Expected text not found in {path}: {old}")
