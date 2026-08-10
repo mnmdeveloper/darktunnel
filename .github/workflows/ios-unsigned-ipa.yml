@@ -1,7 +1,9 @@
 name: Build unsigned IPA for ESign
 
+run-name: "Build unsigned IPA for ESign #${{ github.run_number }}"
+
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   push:
     branches: [main]
     paths:
@@ -54,7 +56,6 @@ jobs:
           set -o pipefail
           rm -rf build
           mkdir -p build
-
           xcodebuild build \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
@@ -79,6 +80,7 @@ jobs:
           echo "Unsigned app: $APP"
 
       - name: ✅ Verify unsigned app bundle
+        id: verify_app
         env:
           APP: ${{ steps.locate_app.outputs.app }}
         run: |
@@ -86,16 +88,13 @@ jobs:
           BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" 2>/dev/null || echo unknown)"
           BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" 2>/dev/null || echo unknown)"
-
           echo "Bundle ID: $BUNDLE_ID"
           echo "Version:   $VERSION ($BUILD)"
           echo "Extensions:"
           find "$APP/PlugIns" -maxdepth 1 -type d -name '*.appex' -print 2>/dev/null || true
-
           test ! -e "$APP/_CodeSignature"
           test -d "$APP/PlugIns/PacketTunnel.appex"
           test -d "$APP/PlugIns/DarkTunnelLiveActivity.appex"
-
           {
             echo "bundle_id=$BUNDLE_ID"
             echo "version=$VERSION"
@@ -154,7 +153,7 @@ jobs:
             echo
             echo '## Extensions'
             if [ -n "${APP:-}" ] && [ -d "$APP/PlugIns" ]; then
-              find "$APP/PlugIns" -maxdepth 1 -type d -name '*.appex' -printf '%f\n' | sed 's/^/- /' || true
+              find "$APP/PlugIns" -maxdepth 1 -type d -name '*.appex' -print | sed 's|.*/|- |' || true
             else
               echo '- unavailable'
             fi
