@@ -57,17 +57,34 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     activation = await session.scalar(select(Activation).where(Activation.id == activation_id).with_for_update())
     if activation is None or activation.token_hash != hash_token(data.token):
         raise ValueError("Activation link not found")
+
     now = datetime.now(UTC)
     if activation.revoked_at is not None or activation.link_expires_at < now:
         raise ValueError("Activation link unavailable")
 
-    existing_device = await session.scalar(select(Device).where(Device.installation_id == data.installation_id))
+    # The installation ID belongs to exactly one existing device record in
+    # normal operation. Never let a device that belongs to another subscription
+    # be rebound merely because a different activation link was presented.
+    existing_device = await session.scalar(
+        select(Device)
+        .where(Device.installation_id == data.installation_id)
+        .with_for_update()
+    )
+
     if existing_device is not None:
         user = await session.get(User, existing_device.user_id)
         if user is None or user.status == UserStatus.blocked:
             raise ValueError("Subscription blocked")
         if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
             raise ValueError("Subscription expired")
+
+        # A device can only be reused with an activation that points to the
+        # same subscription owner. This closes the old cross-link rebinding hole.
+        if activation.user_id is None or activation.user_id != user.id:
+            raise ValueError("Device already belongs to another subscription")
+
+        # Re-opening the same link on the same device is idempotent. It must not
+        # consume another activation use or extend the subscription lifetime.
         existing_device.public_key = data.public_key
         existing_device.app_version = data.app_version
         existing_device.ios_version = data.ios_version
@@ -98,7 +115,15 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         await session.flush()
         activation.user_id = user.id
 
-    device_count = await session.scalar(select(func.count(Device.id)).where(Device.user_id == user.id, Device.revoked_at.is_(None)))
+    # max_uses limits how many NEW devices can consume this activation link;
+    # max_devices is the hard limit for simultaneously active devices on the
+    # resulting subscription. Existing devices are handled idempotently above.
+    if activation.uses >= activation.max_uses:
+        raise ValueError("Activation use limit reached")
+
+    device_count = await session.scalar(
+        select(func.count(Device.id)).where(Device.user_id == user.id, Device.revoked_at.is_(None))
+    )
     if int(device_count or 0) >= activation.max_devices:
         raise ValueError("Device limit reached")
 
