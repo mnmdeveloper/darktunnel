@@ -77,11 +77,16 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/include"
+          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo"
         FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/build"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo/out"
         OTHER_LDFLAGS:
           - "-lresolv"
+          - "-lwg-go"
 
   DarkTunnelLiveActivity:
     type: app-extension
