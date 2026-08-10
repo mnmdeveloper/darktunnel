@@ -111,6 +111,68 @@ async def activation_server_profile(token: str, installation_id: str, session: A
     }}
 
 
+@app.get("/v1/activation/server-profile/{server_id}")
+async def activation_server_profile_for_node(
+    server_id: str,
+    token: str,
+    installation_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Return one published server's private AWG client profile to an activated device."""
+    try:
+        payload = decode_activation_token(token)
+        activation_id = str(payload["activation_id"])
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid activation token") from exc
+
+    activation = await session.scalar(select(Activation).where(Activation.id == activation_id))
+    now = datetime.now(UTC)
+    if activation is None or activation.token_hash != hash_token(token) or activation.revoked_at is not None or activation.link_expires_at < now:
+        raise HTTPException(status_code=401, detail="Activation token unavailable")
+
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id))
+    if device is None or device.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Device not activated")
+
+    try:
+        node = await session.scalar(select(ServerNode).where(ServerNode.id == server_id, ServerNode.published.is_(True), ServerNode.maintenance.is_(False), ServerNode.archived_at.is_(None)))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid server id") from exc
+    if node is None:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    try:
+        config = decrypt_server_config(node.encrypted_config)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
+
+    awg_config = str(config.get("awg_client_config", "")).strip()
+    if not awg_config:
+        raise HTTPException(status_code=404, detail="AmneziaWG is not provisioned for this server")
+
+    health = await session.scalar(select(ServerHealth).where(ServerHealth.server_id == node.id).order_by(ServerHealth.timestamp.desc()).limit(1))
+    return {"server": {
+        "id": str(node.id),
+        "name": node.name,
+        "country_code": node.country_code,
+        "country_name": node.country_name,
+        "city": node.city,
+        "latitude": node.latitude,
+        "longitude": node.longitude,
+        "host": node.host,
+        "port": node.port,
+        "mode": node.protocol_mode,
+        "wrap_a_password": str(config.get("wrap_a_password", "")),
+        "connections_balanced": node.balanced_connections,
+        "connections_maximum": node.max_connections,
+        "mtu": node.mtu,
+        "dns": node.dns,
+        "latency_ms": health.latency_ms if health else None,
+        "online": bool(health.online) if health else True,
+        "amnezia_config": awg_config,
+    }}
+
+
 def require_owner(x_admin_id: int = Header(alias="X-Admin-ID")) -> int:
     if x_admin_id != get_settings().telegram_owner_id:
         raise HTTPException(status_code=403, detail="Forbidden")
