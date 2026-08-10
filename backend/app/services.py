@@ -62,9 +62,8 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     if activation.revoked_at is not None or activation.link_expires_at < now:
         raise ValueError("Activation link unavailable")
 
-    # The installation ID belongs to exactly one existing device record in
-    # normal operation. Never let a device that belongs to another subscription
-    # be rebound merely because a different activation link was presented.
+    # Lock the installation row if it already exists. Never let a device that
+    # belongs to another subscription be rebound by presenting a new link.
     existing_device = await session.scalar(
         select(Device)
         .where(Device.installation_id == data.installation_id)
@@ -78,13 +77,21 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
             raise ValueError("Subscription expired")
 
-        # A device can only be reused with an activation that points to the
-        # same subscription owner. This closes the old cross-link rebinding hole.
-        if activation.user_id is None or activation.user_id != user.id:
+        if activation.user_id is not None and activation.user_id != user.id:
             raise ValueError("Device already belongs to another subscription")
 
-        # Re-opening the same link on the same device is idempotent. It must not
-        # consume another activation use or extend the subscription lifetime.
+        if activation.user_id is None:
+            # A fresh activation redeemed on an already-known device is a
+            # legitimate renewal. Bind the activation to the existing user and
+            # extend that subscription instead of creating a second User row.
+            activation.user_id = user.id
+            base = user.subscription_expires_at if user.subscription_expires_at and user.subscription_expires_at > now else now
+            if not user.lifetime:
+                user.subscription_expires_at = base + timedelta(days=activation.duration_days)
+            activation.uses = max(activation.uses, 0) + 1
+            session.add(AuditLog(admin_id=activation.created_by, action="activation.redeem.renew", entity_type="activation", entity_id=str(activation.id)))
+        # If activation.user_id already points to this user, re-opening the same
+        # link on the same device is idempotent: no extra days and no extra use.
         existing_device.public_key = data.public_key
         existing_device.app_version = data.app_version
         existing_device.ios_version = data.ios_version
@@ -115,9 +122,8 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         await session.flush()
         activation.user_id = user.id
 
-    # max_uses limits how many NEW devices can consume this activation link;
-    # max_devices is the hard limit for simultaneously active devices on the
-    # resulting subscription. Existing devices are handled idempotently above.
+    # max_uses limits NEW devices consuming the activation. A repeat on an
+    # already-bound device is handled idempotently above.
     if activation.uses >= activation.max_uses:
         raise ValueError("Activation use limit reached")
 
