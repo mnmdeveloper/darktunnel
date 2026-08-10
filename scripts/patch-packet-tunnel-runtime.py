@@ -12,7 +12,7 @@ old = r'''                    let handle = resolvedUAPI.withCString { awgTurnOn(
                     self.amneziaHandle = handle
                     let versionPointer = awgVersion()
                     let version = versionPointer == nil ? "unknown" : String(cString: versionPointer!)
-                    self.logger.notice("AmneziaWG backend started: \\(version), endpoint \\(resolved.host)")
+                    self.logger.notice("AmneziaWG backend started: \(version), endpoint \(resolved.host)")
                     awgDisableSomeRoamingForBrokenMobileSemantics(handle)
                     completionHandler(nil)
 '''
@@ -38,7 +38,7 @@ new = r'''                    // awgTurnOn performs native Go socket/configurati
 
                         DispatchQueue.main.async {
                             self.amneziaHandle = handle
-                            self.logger.notice("AmneziaWG backend started: \\(version), endpoint \\(resolved.host)")
+                            self.logger.notice("AmneziaWG backend started: \(version), endpoint \(resolved.host)")
                             completionHandler(nil)
                         }
                     }
