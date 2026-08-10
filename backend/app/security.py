@@ -26,26 +26,18 @@ def hash_token(token: str) -> str:
 
 def create_activation_token(activation_id: str, expires_at: datetime) -> str:
     nonce = secrets.token_bytes(12)
-    payload = json.dumps(
-        {
-            "v": 1,
-            "activation_id": activation_id,
-            "issued_at": int(datetime.now(UTC).timestamp()),
-            "expires_at": int(expires_at.timestamp()),
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
+    payload = json.dumps({"v": 1, "activation_id": activation_id, "issued_at": int(datetime.now(UTC).timestamp()), "expires_at": int(expires_at.timestamp())}, separators=(",", ":")).encode("utf-8")
     encrypted = AESGCM(_key()).encrypt(nonce, payload, b"darktunnel-activation-v1")
     return base64.urlsafe_b64encode(nonce + encrypted).decode("ascii").rstrip("=")
 
 
-def decode_activation_token(token: str) -> dict[str, object]:
+def decode_activation_token(token: str, allow_expired: bool = False) -> dict[str, object]:
     raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
     if len(raw) < 29:
         raise ValueError("Invalid activation token")
     payload = AESGCM(_key()).decrypt(raw[:12], raw[12:], b"darktunnel-activation-v1")
     data = json.loads(payload)
-    if int(data["expires_at"]) < int(datetime.now(UTC).timestamp()):
+    if not allow_expired and int(data["expires_at"]) < int(datetime.now(UTC).timestamp()):
         raise ValueError("Activation link expired")
     return data
 
