@@ -60,7 +60,7 @@ jobs:
       - name: Verify Xcode and SDK
         run: |
           set -euo pipefail
-          xcode-select -s "$DEVELOPER_DIR"
+          echo "Developer directory: $DEVELOPER_DIR"
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
           go version
