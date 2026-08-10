@@ -1,33 +1,37 @@
 #include <stdint.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/kern_control.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
+// iOS SDKs used by PacketTunnel do not expose <sys/kern_control.h>.
+// WireGuard's Apple implementation identifies the already-created utun
+// socket with getsockopt(), so no kernel-control structures are needed here.
+#ifndef DT_SYSPROTO_CONTROL
+#define DT_SYSPROTO_CONTROL 2
+#endif
+
+#ifndef DT_UTUN_OPT_IFNAME
+#define DT_UTUN_OPT_IFNAME 2
+#endif
+
+#ifndef IFNAMSIZ
+#define IFNAMSIZ 16
+#endif
+
 int32_t dt_find_utun_fd(void) {
-    struct ctl_info ctlInfo = {0};
-    strlcpy(ctlInfo.ctl_name, "com.apple.net.utun_control", sizeof(ctlInfo.ctl_name));
-
     for (int32_t fd = 0; fd <= 1024; fd++) {
-        struct sockaddr_ctl addr = {0};
-        socklen_t length = (socklen_t)sizeof(addr);
+        char ifname[IFNAMSIZ] = {0};
+        socklen_t ifnameLength = (socklen_t)sizeof(ifname);
 
-        if (getpeername(fd, (struct sockaddr *)&addr, &length) != 0) {
+        if (getsockopt(fd,
+                       DT_SYSPROTO_CONTROL,
+                       DT_UTUN_OPT_IFNAME,
+                       ifname,
+                       &ifnameLength) != 0) {
             continue;
         }
 
-        if (addr.sc_family != AF_SYSTEM || addr.ss_sysaddr != AF_SYS_CONTROL) {
-            continue;
-        }
-
-        if (ctlInfo.ctl_id == 0) {
-            if (ioctl(fd, CTLIOCGINFO, &ctlInfo) != 0) {
-                continue;
-            }
-        }
-
-        if (addr.sc_id == ctlInfo.ctl_id) {
+        if (strncmp(ifname, "utun", 4) == 0) {
             return fd;
         }
     }
