@@ -36,29 +36,19 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           provider = Path('PacketTunnel/PacketTunnelProvider.swift')
           text = provider.read_text()
-          old = '''    private func findTunFileDescriptor() -> Int32? {
-          var buffer = [CChar](repeating: 0, count: Int(IFNAMSIZ))
-          for descriptor: Int32 in 0...1024 {
-              var length = socklen_t(buffer.count)
-              let result = getsockopt(descriptor, 2, 2, &buffer, &length)
-              if result == 0, String(cString: buffer).hasPrefix("utun") {
-                  return descriptor
-              }
-          }
-          return nil
-      }
-          '''
-          new = '''    private func findTunFileDescriptor() -> Int32? {
+          pattern = r'    private func findTunFileDescriptor\(\) -> Int32\? \{.*?\n    \}'
+          replacement = '''    private func findTunFileDescriptor() -> Int32? {
           let fd = dt_find_utun_fd()
           return fd >= 0 ? fd : nil
-      }
-          '''
-          if old not in text:
+      }'''
+          text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
               raise SystemExit('Expected PacketTunnel utun lookup was not found')
-          provider.write_text(text.replace(old, new, 1))
+          provider.write_text(text)
 
           bridge = Path('PacketTunnel/BridgeHeader.h')
           bridge.write_text('''#ifndef DarkTunnel_BridgeHeader_h
