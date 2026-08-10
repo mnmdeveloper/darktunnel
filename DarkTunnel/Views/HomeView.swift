@@ -10,6 +10,7 @@ struct HomeView: View {
 
     private let panel = Color(red: 0.08, green: 0.10, blue: 0.13)
     private let accent = Color(red: 0.37, green: 0.47, blue: 0.58)
+    private let moscow = CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173)
 
     var body: some View {
         ZStack {
@@ -40,7 +41,10 @@ struct HomeView: View {
                 await announcements.refresh()
             }
         }
-        .onChange(of: viewModel.selectedServer) { _, _ in moveCamera(animated: true) }
+        .onChange(of: viewModel.state) { _, _ in moveCamera(animated: true) }
+        .onChange(of: viewModel.selectedServer) { _, _ in
+            if viewModel.state == .connected { moveCamera(animated: true) }
+        }
         .onChange(of: scenePhase) { _, phase in viewModel.handleScenePhase(phase) }
     }
 
@@ -190,11 +194,16 @@ struct HomeView: View {
     }
 
     private func moveCamera(animated: Bool) {
-        guard !viewModel.servers.isEmpty else { return }
-        let region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: viewModel.selectedServer.latitude, longitude: viewModel.selectedServer.longitude),
-            span: MKCoordinateSpan(latitudeDelta: 18, longitudeDelta: 18)
-        )
+        let coordinate: CLLocationCoordinate2D
+        let span: MKCoordinateSpan
+        if viewModel.state == .connected {
+            coordinate = CLLocationCoordinate2D(latitude: viewModel.selectedServer.latitude, longitude: viewModel.selectedServer.longitude)
+            span = MKCoordinateSpan(latitudeDelta: 6.5, longitudeDelta: 9.0)
+        } else {
+            coordinate = moscow
+            span = MKCoordinateSpan(latitudeDelta: 5.5, longitudeDelta: 8.5)
+        }
+        let region = MKCoordinateRegion(center: coordinate, span: span)
         if animated {
             withAnimation(.easeInOut(duration: 1.1)) { camera = .region(region) }
         } else {
