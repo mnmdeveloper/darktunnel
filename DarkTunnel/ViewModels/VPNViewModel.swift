@@ -12,7 +12,7 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = UserDefaults.standard.bool(forKey: "disconnectOnSleep") { didSet { UserDefaults.standard.set(disconnectOnSleep, forKey: "disconnectOnSleep") } }
     @Published var reconnectAfterWake = UserDefaults.standard.object(forKey: "reconnectAfterWake") as? Bool ?? true { didSet { UserDefaults.standard.set(reconnectAfterWake, forKey: "reconnectAfterWake") } }
     @Published var routeAPNsThroughVPN = UserDefaults.standard.bool(forKey: "routeAPNsThroughVPN") { didSet { UserDefaults.standard.set(routeAPNsThroughVPN, forKey: "routeAPNsThroughVPN") } }
-    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true { didSet { UserDefaults.standard.set(liveActivitiesEnabled.rawValue, forKey: "liveActivitiesEnabled"); if !liveActivitiesEnabled { LiveActivityController.shared.end() } } }
+    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true { didSet { UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled"); if !liveActivitiesEnabled { LiveActivityController.shared.end() } } }
     @Published var connectionError: String?
     @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
     @Published private(set) var servers: [VPNServer] = []
