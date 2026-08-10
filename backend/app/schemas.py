@@ -41,6 +41,33 @@ class ServerProfile(BaseModel):
 class ActivationResult(BaseModel):
     user_id: str
     device_id: str
-    subscription_expires_at: datetime
+    subscription_expires_at: datetime | None
+    lifetime: bool
+    user_status: str
     refresh_token: str
     server: ServerProfile
+
+
+class SubscriptionStatus(BaseModel):
+    user_id: str
+    device_id: str
+    status: str
+    active: bool
+    lifetime: bool
+    subscription_expires_at: datetime | None
+    checked_at: datetime
+
+
+class AnnouncementCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=4000)
+    placement: str = Field(pattern="^(home|server)$")
+    color_hex: str = Field(default="#60758F", pattern=r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
+
+
+class AnnouncementPatch(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    body: str | None = Field(default=None, min_length=1, max_length=4000)
+    placement: str | None = Field(default=None, pattern="^(home|server)$")
+    color_hex: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
+    active: bool | None = None
