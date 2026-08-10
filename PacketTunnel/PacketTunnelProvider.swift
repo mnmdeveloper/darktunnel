@@ -117,7 +117,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         do {
             let parsed = try AmneziaQuickConfig.parse(wgQuick)
-            let settings = makeNetworkSettings(address: parsed.address, dns: parsed.dns, mtu: parsed.mtu, remoteAddress: parsed.remoteHost)
+            guard let resolved = resolveEndpoint(parsed.endpoint) else {
+                completionHandler(TunnelError.endpointResolutionFailed(parsed.endpoint))
+                return
+            }
+
+            let settings = makeNetworkSettings(address: parsed.address, dns: parsed.dns, mtu: parsed.mtu, remoteAddress: resolved.host)
+            let resolvedUAPI = parsed.uapi.replacingOccurrences(of: "endpoint=\(parsed.endpoint)", with: "endpoint=\(resolved.endpoint)")
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -131,13 +137,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                         return
                     }
 
-                    let handle = parsed.uapi.withCString { awgTurnOn($0, descriptor) }
+                    let handle = resolvedUAPI.withCString { awgTurnOn($0, descriptor) }
                     guard handle >= 0 else {
                         completionHandler(TunnelError.amneziaBackendFailed(handle))
                         return
                     }
                     self.amneziaHandle = handle
-                    self.logger.notice("AmneziaWG backend started: \(String(cString: awgVersion()))")
+                    let versionPointer = awgVersion()
+                    let version = versionPointer == nil ? "unknown" : String(cString: versionPointer!)
+                    self.logger.notice("AmneziaWG backend started: \(version), endpoint \(resolved.host)")
                     awgDisableSomeRoamingForBrokenMobileSemantics(handle)
                     completionHandler(nil)
                 }
@@ -145,6 +153,45 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             completionHandler(error)
         }
+    }
+
+    private func resolveEndpoint(_ endpoint: String) -> (host: String, endpoint: String)? {
+        let value = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host: String
+        let port: String
+
+        if value.hasPrefix("[") {
+            guard let close = value.firstIndex(of: "]") else { return nil }
+            host = String(value[value.index(after: value.startIndex)..<close])
+            let after = value.index(after: close)
+            guard after < value.endIndex, value[after] == ":" else { return nil }
+            port = String(value[value.index(after: after)...])
+        } else {
+            guard let colon = value.lastIndex(of: ":") else { return nil }
+            host = String(value[..<colon])
+            port = String(value[value.index(after: colon)...])
+        }
+
+        guard !host.isEmpty, Int(port) != nil else { return nil }
+
+        if IPv4Address(host) != nil { return (host, "\(host):\(port)") }
+        if let ipv6 = IPv6Address(host) { return ("\(ipv6)", "[\(ipv6)]:\(port)") }
+
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_DGRAM
+        hints.ai_protocol = IPPROTO_UDP
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, port, &hints, &result) == 0, let first = result else { return nil }
+        defer { freeaddrinfo(first) }
+
+        var numeric = [CChar](repeating: 0, count: 1025)
+        guard getnameinfo(first.pointee.ai_addr, first.pointee.ai_addrlen, &numeric, socklen_t(numeric.count), nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+        let resolvedHost = String(cString: numeric)
+        if resolvedHost.contains(":") {
+            return (resolvedHost, "[\(resolvedHost)]:\(port)")
+        }
+        return (resolvedHost, "\(resolvedHost):\(port)")
     }
 
     private func readTURNServerIP(handle: Int32) -> String {
@@ -172,7 +219,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         let dnsServers = dns.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        settings.dnsSettings = NEDNSSettings(servers: dnsServers.isEmpty ? ["1.1.1.1"] : dnsServers)
+        let dnsSettings = NEDNSSettings(servers: dnsServers.isEmpty ? ["1.1.1.1"] : dnsServers)
+        dnsSettings.matchDomains = [""]
+        settings.dnsSettings = dnsSettings
         settings.mtu = NSNumber(value: min(max(mtu, 576), 1500))
         return settings
     }
@@ -226,7 +275,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         if message == "amnezia_version", amneziaHandle >= 0 {
-            completionHandler?(Data(String(cString: awgVersion()).utf8))
+            let pointer = awgVersion()
+            completionHandler?(Data((pointer == nil ? "unknown" : String(cString: pointer!)).utf8))
             return
         }
         completionHandler?(Data("DarkTunnel mode: \(activeMode)".utf8))
@@ -245,7 +295,7 @@ private struct AmneziaQuickConfig {
     let address: String
     let dns: String
     let mtu: Int
-    let remoteHost: String
+    let endpoint: String
     let uapi: String
 
     static func parse(_ text: String) throws -> AmneziaQuickConfig {
@@ -343,7 +393,7 @@ private struct AmneziaQuickConfig {
             address: address,
             dns: interface["dns"] ?? "1.1.1.1",
             mtu: Int(interface["mtu"] ?? "1280") ?? 1280,
-            remoteHost: endpointHost(endpoint),
+            endpoint: endpoint,
             uapi: lines.joined(separator: "\n") + "\n"
         )
     }
@@ -355,17 +405,6 @@ private struct AmneziaQuickConfig {
             throw TunnelError.invalidAmneziaConfiguration("Некорректный ключ AmneziaWG")
         }
         return data.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func endpointHost(_ endpoint: String) -> String {
-        let value = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.hasPrefix("[") {
-            return value.split(separator: "]", maxSplits: 1).first.map { String($0.dropFirst()) } ?? value
-        }
-        if let colon = value.lastIndex(of: ":"), value[value.index(after: colon)...].allSatisfy({ $0.isNumber }) {
-            return String(value[..<colon])
-        }
-        return value
     }
 }
 
@@ -380,6 +419,7 @@ private enum TunnelError: LocalizedError {
     case noTunDevice
     case missingAmneziaConfiguration
     case amneziaBackendFailed(Int32)
+    case endpointResolutionFailed(String)
     case invalidAmneziaConfiguration(String)
 
     var errorDescription: String? {
@@ -394,6 +434,7 @@ private enum TunnelError: LocalizedError {
         case .noTunDevice: return "Не удалось получить системный TUN-интерфейс"
         case .missingAmneziaConfiguration: return "Отсутствует конфигурация AmneziaWG"
         case .amneziaBackendFailed(let code): return "Ошибка AmneziaWG: \(code)"
+        case .endpointResolutionFailed(let endpoint): return "Не удалось определить IP AmneziaWG endpoint: \(endpoint)"
         case .invalidAmneziaConfiguration(let message): return message
         }
     }
