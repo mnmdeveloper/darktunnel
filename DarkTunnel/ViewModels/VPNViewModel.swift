@@ -87,7 +87,14 @@ final class VPNViewModel: ObservableObject {
             if preferredTransport == .automatic { chosenTransport = connectivity.recommendedTransport; resolvedTransport = chosenTransport } else { chosenTransport = preferredTransport; resolvedTransport = chosenTransport }
             if usesAutomaticServer { selectBestServer(for: chosenTransport) }
             if chosenTransport == .vkTurn && !hasValidVKLink { connectionError = "Добавьте ссылку VK-звонка для режима VK обход"; state = .disconnected; return }
-            if chosenTransport == .amneziaWG && remoteServers[selectedServer.id]?.amneziaConfig?.isEmpty != false { await refreshServers() }
+            if chosenTransport == .amneziaWG {
+                let ready = await ensureAmneziaProfile()
+                if !ready {
+                    connectionError = usesAutomaticServer ? "Нет доступного сервера с конфигурацией AmneziaWG" : "Для этого сервера нет конфигурации AmneziaWG"
+                    state = .disconnected
+                    return
+                }
+            }
             saveVKLink()
             guard let profile = remoteServers[selectedServer.id]?.tunnelProfile ?? ActivationStore.shared.serverProfile else { connectionError = "Сохранённая конфигурация сервера повреждена"; state = .disconnected; return }
             UserDefaults.standard.set(speedMode.rawValue, forKey: "vkTurnConnections")
@@ -131,6 +138,36 @@ final class VPNViewModel: ObservableObject {
     func selectAutomaticServer() { usesAutomaticServer = true; selectBestLocalServer(); reconnectIfNeeded() }
     func select(_ server: VPNServer) { usesAutomaticServer = false; selectedServer = server; reconnectIfNeeded() }
 
+    private func ensureAmneziaProfile() async -> Bool {
+        let candidates: [VPNServer]
+        if usesAutomaticServer {
+            candidates = servers.sorted(by: latencyOrder)
+        } else {
+            candidates = [selectedServer]
+        }
+
+        for candidate in candidates {
+            guard let remote = remoteServers[candidate.id] else { continue }
+            if remote.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                selectedServer = candidate
+                return true
+            }
+
+            guard let secure = try? await ServerDirectoryClient.shared.fetchActivatedServer(remote.id) else { continue }
+            let merged = ServerDirectoryCache.mergeSecure(secure, into: Array(remoteServers.values))
+            ServerDirectoryCache.save(merged)
+            remoteServers = Dictionary(uniqueKeysWithValues: merged.map { ($0.displayModel.id, $0) })
+            if let refreshed = merged.first(where: { $0.id == secure.id || ($0.host == secure.host && $0.port == secure.port) }) {
+                selectedServer = refreshed.displayModel
+            } else {
+                selectedServer = secure.displayModel
+            }
+            return secure.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+
+        return false
+    }
+
     private func measureTunnelLatency() async {
         guard state == .connected, let url = URL(string: "https://api.31-77-148-80.sslip.io/health") else { return }
         isMeasuringLatency = true
@@ -169,7 +206,10 @@ final class VPNViewModel: ObservableObject {
     private func selectBestLocalServer() { guard !servers.isEmpty else { return }; selectedServer = servers.min { latencyOrder($0, $1) } ?? servers[0] }
     private func selectBestServer(for transport: TransportKind) {
         guard !servers.isEmpty else { return }
-        if transport == .amneziaWG { let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.isEmpty == false }; if let best = candidates.min(by: latencyOrder) { selectedServer = best; return } }
+        if transport == .amneziaWG {
+            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.isEmpty == false }
+            if let best = candidates.min(by: latencyOrder) { selectedServer = best; return }
+        }
         if let best = servers.min(by: latencyOrder) { selectedServer = best }
     }
     private func latencyOrder(_ lhs: VPNServer, _ rhs: VPNServer) -> Bool { (lhs.latencyMilliseconds > 0 ? lhs.latencyMilliseconds : Int.max) < (rhs.latencyMilliseconds > 0 ? rhs.latencyMilliseconds : Int.max) }
