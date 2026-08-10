@@ -165,8 +165,12 @@ jobs:
             -o "$FRAMEWORK/AmneziaWG"
 
           test -s "$FRAMEWORK/AmneziaWG"
-          cp out/libwg-go.h "$FRAMEWORK/Headers/AmneziaWG.h"
-          cp out/libwg-go.h "$FRAMEWORK/AmneziaWG.h"
+          # The PacketTunnel target already owns the stable namespaced bridge
+          # declarations. The Go archive does not reliably emit a companion
+          # header when built by the upstream Makefile, so use that source
+          # header rather than assuming out/libwg-go.h exists.
+          cp "$GITHUB_WORKSPACE/PacketTunnel/AmneziaWGBridge.h" "$FRAMEWORK/Headers/AmneziaWG.h"
+          cp "$GITHUB_WORKSPACE/PacketTunnel/AmneziaWGBridge.h" "$FRAMEWORK/AmneziaWG.h"
           cat > "$FRAMEWORK/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
