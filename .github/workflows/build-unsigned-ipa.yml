@@ -59,49 +59,63 @@ jobs:
         run: |
           set -euo pipefail
 
-          # GNU patch creates a temporary backup while applying the Go runtime
-          # patch. On GitHub's macOS runner, $RUNNER_TEMP can be unsuitable for
-          # that operation, so keep every temporary file inside the checkout.
+          # Do not let GNU patch create temporary backup files on the macOS
+          # runner. The upstream Makefile patches a copied Go runtime, but the
+          # runner can reject patch's temporary-file operation. We apply the
+          # tiny upstream runtime patch ourselves and pre-create .prepared;
+          # make then skips the patch recipe entirely.
           PATCH_TMP="$PWD/.patch-tmp"
           BUILD_TMP="$PWD/.build-tmp"
+          GOROOT_COPY="$BUILD_TMP/wireguard-go-bridge/goroot"
           rm -rf "$PATCH_TMP" "$BUILD_TMP" out
           mkdir -p "$PATCH_TMP" "$BUILD_TMP" out
           chmod 700 "$PATCH_TMP" "$BUILD_TMP" out
 
-          export TMPDIR="$PATCH_TMP"
-          export TMP="$PATCH_TMP"
-          export TEMP="$PATCH_TMP"
-
           chmod -R u+rwX .
-
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('api-apple.go')
-          text = path.read_text()
-          for old, new in {
-              'wgSetLogger': 'awgSetLogger',
-              'wgTurnOn': 'awgTurnOn',
-              'wgTurnOff': 'awgTurnOff',
-              'wgSetConfig': 'awgSetConfig',
-              'wgGetConfig': 'awgGetConfig',
-              'wgBumpSockets': 'awgBumpSockets',
-              'wgDisableSomeRoamingForBrokenMobileSemantics': 'awgDisableSomeRoamingForBrokenMobileSemantics',
-              'wgVersion': 'awgVersion',
-          }.items():
-              text = text.replace(old, new)
-          path.write_text(text)
-          PY
-
           make clean
+
+          REAL_GOROOT="$(go env GOROOT)"
+          mkdir -p "$GOROOT_COPY"
+          rsync -a --delete --exclude=pkg/obj/go-build "$REAL_GOROOT/" "$GOROOT_COPY/"
+
+          python3 - "$GOROOT_COPY" <<'PY'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          replacements = {
+              "src/runtime/sys_darwin.go": [
+                  ("libc_mach_absolute_time", "libc_mach_continuous_time"),
+              ],
+              "src/runtime/sys_darwin_amd64.s": [
+                  ("CALL libc_mach_absolute_time(SB)", "CALL libc_mach_continuous_time(SB)"),
+              ],
+              "src/runtime/sys_darwin_arm64.s": [
+                  ("BL libc_mach_absolute_time(SB)", "BL libc_mach_continuous_time(SB)"),
+              ],
+          }
+
+          for rel, pairs in replacements.items():
+              path = root / rel
+              text = path.read_text()
+              original = text
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f"Expected text not found in {path}: {old}")
+                  text = text.replace(old, new)
+              path.write_text(text)
+              print(f"patched {path}")
+
+          prepared = root / ".prepared"
+          prepared.touch()
+          print(f"prepared {prepared}")
+          PY
 
           PLATFORM_NAME=iphoneos \
           SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
           ARCHS=arm64 \
           CONFIGURATION_TEMP_DIR="$BUILD_TMP" \
           CONFIGURATION_BUILD_DIR="$PWD/out" \
-          TMPDIR="$PATCH_TMP" \
-          TMP="$PATCH_TMP" \
-          TEMP="$PATCH_TMP" \
           make build
 
           test -f out/libwg-go.a
