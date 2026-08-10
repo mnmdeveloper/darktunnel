@@ -27,7 +27,9 @@ async def init_db() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         # The project historically used create_all without migrations. Keep startup
-        # backward-compatible by applying the two additive columns explicitly.
+        # backward-compatible by applying additive schema changes explicitly.
         await connection.execute(text("ALTER TABLE activations ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_activations_user_id ON activations(user_id)"))
+        await connection.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS auth_token_hash VARCHAR(128) NOT NULL DEFAULT ''"))
+        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_devices_auth_token_hash ON devices(auth_token_hash)"))
         await connection.execute(text("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS color_hex VARCHAR(9) NOT NULL DEFAULT '#60758F'"))
