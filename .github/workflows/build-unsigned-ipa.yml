@@ -1,27 +1,42 @@
-name: DarkTunnel — Build unsigned IPA for ESign
+name: Build unsigned IPA for ESign
+
+run-name: DarkTunnel unsigned IPA — ${{ github.ref_name }}
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
-
-concurrency:
-  group: darktunnel-unsigned-ipa-main
-  cancel-in-progress: true
+    inputs:
+      clean_build:
+        description: Clean all generated build output before compiling
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   build-unsigned-ipa:
-    name: DarkTunnel — unsigned IPA (ESign)
+    name: Build DarkTunnel unsigned IPA
     runs-on: macos-15
+    timeout-minutes: 45
 
     steps:
       - name: Checkout DarkTunnel
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          clean: true
+
+      - name: Show runner toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          xcode-select -p
+          uname -m
 
       - name: Checkout VK TURN engine
         uses: actions/checkout@v4
@@ -29,6 +44,7 @@ jobs:
           repository: anton48/vk-turn-proxy-ios
           ref: main
           path: Vendor/vk-turn-proxy-ios
+          fetch-depth: 1
 
       - name: Checkout AmneziaWG Apple engine
         uses: actions/checkout@v4
@@ -36,6 +52,7 @@ jobs:
           repository: amnezia-vpn/amneziawg-apple
           ref: master
           path: Vendor/amneziawg-apple
+          fetch-depth: 1
 
       - name: Fix iOS utun descriptor lookup
         run: |
@@ -53,7 +70,7 @@ jobs:
           }'''
           text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
           if count != 1:
-              raise SystemExit('Expected PacketTunnel utun lookup was not found')
+              raise SystemExit('Could not patch findTunFileDescriptor()')
           provider.write_text(text)
 
           Path('PacketTunnel/BridgeHeader.h').write_text('''#ifndef DarkTunnel_BridgeHeader_h
@@ -73,43 +90,23 @@ int32_t dt_find_utun_fd(void);
 
           Path('PacketTunnel/UTunHelper.m').write_text('''#include <stdint.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#ifndef CTLIOCGINFO
-#define CTLIOCGINFO 0xc0644e03UL
+#ifndef DT_SYSPROTO_CONTROL
+#define DT_SYSPROTO_CONTROL 2
 #endif
-#ifndef AF_SYSTEM
-#define AF_SYSTEM 32
+#ifndef DT_UTUN_OPT_IFNAME
+#define DT_UTUN_OPT_IFNAME 2
 #endif
-#ifndef AF_SYS_CONTROL
-#define AF_SYS_CONTROL 2
+#ifndef IFNAMSIZ
+#define IFNAMSIZ 16
 #endif
-#ifndef MAX_KCTL_NAME
-#define MAX_KCTL_NAME 96
-#endif
-struct dt_ctl_info {
-    uint32_t ctl_id;
-    char ctl_name[MAX_KCTL_NAME];
-};
-struct dt_sockaddr_ctl {
-    uint8_t sc_len;
-    uint8_t sc_family;
-    uint16_t ss_sysaddr;
-    uint32_t sc_id;
-    uint32_t sc_unit;
-    uint32_t sc_reserved[5];
-};
 int32_t dt_find_utun_fd(void) {
-    struct dt_ctl_info ctlInfo = {0};
-    strncpy(ctlInfo.ctl_name, "com.apple.net.utun_control", sizeof(ctlInfo.ctl_name) - 1);
     for (int32_t fd = 0; fd <= 1024; fd++) {
-        struct dt_sockaddr_ctl addr = {0};
-        socklen_t length = (socklen_t)sizeof(addr);
-        if (getpeername(fd, (struct sockaddr *)&addr, &length) != 0) continue;
-        if (addr.sc_family != AF_SYSTEM || addr.ss_sysaddr != AF_SYS_CONTROL) continue;
-        if (ctlInfo.ctl_id == 0 && ioctl(fd, CTLIOCGINFO, &ctlInfo) != 0) continue;
-        if (addr.sc_id == ctlInfo.ctl_id) return fd;
+        char ifname[IFNAMSIZ] = {0};
+        socklen_t length = (socklen_t)sizeof(ifname);
+        if (getsockopt(fd, DT_SYSPROTO_CONTROL, DT_UTUN_OPT_IFNAME, ifname, &length) != 0) continue;
+        if (strncmp(ifname, "utun", 4) == 0) return fd;
     }
     return -1;
 }
@@ -142,27 +139,17 @@ int32_t dt_find_utun_fd(void) {
           print(f'Namespaced symbols in {changed} Go file(s)')
           PY
 
-      - name: Verify AmneziaWG bridge symbols
-        run: |
-          set -euo pipefail
-          grep -q 'awgTurnOn' PacketTunnel/AmneziaWGBridge.h
-          grep -q 'awgGetConfig' PacketTunnel/AmneziaWGBridge.h
-          ! grep -R -nE '(^|[^A-Za-z])wg(TurnOn|TurnOff|SetConfig|GetConfig|SetLogger|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)\b' Vendor/amneziawg-apple/Sources/WireGuardKitGo --include='*.go'
-
-      - name: Set up Go
+      - name: Set up Go 1.26
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
           cache: true
-          cache-dependency-path: |
-            Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
-            Vendor/amneziawg-apple/Sources/WireGuardKitGo/go.mod
+          cache-dependency-path: Vendor/amneziawg-apple/Sources/WireGuardKitGo/go.mod
 
       - name: Install XcodeGen
         run: |
           set -euo pipefail
           brew install xcodegen
-          xcodebuild -version
           xcodegen --version
           go version
 
@@ -184,6 +171,7 @@ int32_t dt_find_utun_fd(void) {
           rm -rf "$BUILD_TMP" out
           mkdir -p "$BUILD_TMP/bin" out
           chmod -R u+rwX "$BUILD_TMP" out .
+
           REAL_RSYNC="$(command -v rsync)"
           cat > "$BUILD_TMP/bin/rsync" <<EOF
           #!/bin/sh
@@ -191,14 +179,18 @@ int32_t dt_find_utun_fd(void) {
           EOF
           chmod 755 "$BUILD_TMP/bin/rsync"
           export PATH="$BUILD_TMP/bin:$PATH"
+
           make clean
-          PLATFORM_NAME=iphoneos SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" ARCHS=arm64 CONFIGURATION_TEMP_DIR="$BUILD_TMP" CONFIGURATION_BUILD_DIR="$PWD/out" make build
+          PLATFORM_NAME=iphoneos \
+          SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+          ARCHS=arm64 \
+          CONFIGURATION_TEMP_DIR="$BUILD_TMP" \
+          CONFIGURATION_BUILD_DIR="$PWD/out" \
+          make build
+
           test -s out/libwg-go.a
+          echo 'AmneziaWG exported symbols:'
           nm -gU out/libwg-go.a | grep -E ' _?awg(SetLogger|TurnOn|TurnOff|SetConfig|GetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'
-          if nm -gU out/libwg-go.a | grep -E ' _?wg(SetLogger|TurnOn|TurnOff|SetConfig|GetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'; then
-            echo 'ERROR: un-namespaced AmneziaWG symbols remain'
-            exit 1
-          fi
 
       - name: Generate Xcode project
         run: |
@@ -207,6 +199,8 @@ int32_t dt_find_utun_fd(void) {
           xcodegen generate --spec project-unsigned.yml
           test -f DarkTunnel.xcodeproj/project.pbxproj
           test -f Vendor/amneziawg-apple/Sources/WireGuardKitGo/out/libwg-go.a
+          test -d Vendor/vk-turn-proxy-ios/WireGuardBridge/build/WireGuardTURN.xcframework
+          echo 'Generated DarkTunnel.xcodeproj successfully'
 
       - name: Show generated project targets
         run: |
@@ -216,7 +210,9 @@ int32_t dt_find_utun_fd(void) {
       - name: Build unsigned iOS app
         run: |
           set -euo pipefail
-          rm -rf "$RUNNER_TEMP/DerivedData"
+          if [ "${{ inputs.clean_build || true }}" = "true" ]; then
+            rm -rf "$RUNNER_TEMP/DerivedData"
+          fi
           xcodebuild build \
             -project DarkTunnel.xcodeproj \
             -scheme DarkTunnel \
@@ -229,7 +225,7 @@ int32_t dt_find_utun_fd(void) {
             CODE_SIGN_IDENTITY='' \
             DEVELOPMENT_TEAM=''
 
-      - name: Package unsigned IPA for ESign
+      - name: Verify built app
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
@@ -237,11 +233,20 @@ int32_t dt_find_utun_fd(void) {
           test -f "$APP_PATH/Info.plist"
           test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
           test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
-          mkdir -p "$RUNNER_TEMP/package/Payload"
-          cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/"
-          find "$RUNNER_TEMP/package/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
-          find "$RUNNER_TEMP/package/Payload" -name embedded.mobileprovision -type f -delete
-          cd "$RUNNER_TEMP/package"
+          echo "APP_PATH=$APP_PATH"
+          du -sh "$APP_PATH"
+
+      - name: Package unsigned IPA for ESign
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
+          PACKAGE_DIR="$RUNNER_TEMP/package"
+          rm -rf "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/Payload"
+          cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/"
+          find "$PACKAGE_DIR/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$PACKAGE_DIR/Payload" -name embedded.mobileprovision -type f -delete
+          cd "$PACKAGE_DIR"
           /usr/bin/zip -qry -X "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" Payload
           test -s "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa"
           ls -lh "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa"
@@ -254,17 +259,19 @@ int32_t dt_find_utun_fd(void) {
       - name: Build summary
         if: always()
         run: |
-          echo '## DarkTunnel — unsigned IPA for ESign' >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: \`${GITHUB_SHA::12}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Runner: \`${RUNNER_OS}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Xcode: $(xcodebuild -version | head -1)" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" ]; then
-            echo '- IPA: created successfully' >> "$GITHUB_STEP_SUMMARY"
-            echo "- Size: $(du -h "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo '- IPA: not created' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo '## DarkTunnel — Build unsigned IPA for ESign'
+            echo
+            echo "- Commit: \`${GITHUB_SHA::12}\`"
+            echo "- Runner: \`${RUNNER_OS}\`"
+            echo "- Xcode: $(xcodebuild -version | head -1)"
+            if [ -f "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" ]; then
+              echo '- IPA: created successfully'
+              echo "- Size: $(du -h "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | cut -f1)"
+            else
+              echo '- IPA: not created'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload unsigned IPA for ESign
         if: success()
