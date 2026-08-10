@@ -3,7 +3,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var viewModel: VPNViewModel
-    @StateObject private var announcements = AnnouncementStore.shared
+    @StateObject private var announcements = AnnouncementFeed.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var camera: MapCameraPosition = .automatic
     @State private var showingSettings = false
@@ -69,19 +69,13 @@ struct HomeView: View {
                 metric(icon: "calendar", title: daysRemaining, subtitle: "до окончания")
                 metric(icon: "server.rack", title: "\(viewModel.servers.count)", subtitle: "серверов")
                 Button { Task { await viewModel.refreshServers(); await announcements.refresh() } } label: {
-                    Group {
-                        if viewModel.isRefreshingServers { ProgressView().tint(.white) }
-                        else { Image(systemName: "arrow.clockwise") }
-                    }
-                    .frame(width: 42, height: 42)
-                    .background(accent.opacity(0.28), in: Circle())
+                    Group { if viewModel.isRefreshingServers { ProgressView().tint(.white) } else { Image(systemName: "arrow.clockwise") } }
+                        .frame(width: 42, height: 42).background(accent.opacity(0.28), in: Circle())
                 }
-                .buttonStyle(.plain)
-                .disabled(viewModel.isRefreshingServers)
+                .buttonStyle(.plain).disabled(viewModel.isRefreshingServers)
             }
         }
-        .padding(14)
-        .background(panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 24))
+        .padding(14).background(panel.opacity(0.88), in: RoundedRectangle(cornerRadius: 24))
     }
 
     private var connectionPanel: some View {
@@ -93,10 +87,7 @@ struct HomeView: View {
                         Text(viewModel.state.title).font(.headline.weight(.semibold))
                     }
                     Text(viewModel.serverDisplayName).font(.title2.bold())
-                    Text(viewModel.statusDetail)
-                        .font(.caption)
-                        .foregroundStyle(viewModel.connectionError == nil ? Color.secondary : Color.red)
-                        .lineLimit(3)
+                    Text(viewModel.statusDetail).font(.caption).foregroundStyle(viewModel.connectionError == nil ? Color.secondary : Color.red).lineLimit(3)
                 }
                 Spacer()
                 Text(viewModel.activeTransport.rawValue).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -112,12 +103,10 @@ struct HomeView: View {
                     TextField("https://vk.ru/call/join/...", text: $viewModel.vkCallLink)
                         .textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
                     if !viewModel.vkCallLink.isEmpty {
-                        Button { viewModel.vkCallLink = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        Button { viewModel.vkCallLink = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 11)
-                .background(.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 12).padding(.vertical, 11).background(.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 14))
             }
 
             Button(action: viewModel.toggleConnection) {
@@ -129,11 +118,9 @@ struct HomeView: View {
                 .font(.headline).foregroundStyle(.black).frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(.white, in: RoundedRectangle(cornerRadius: 18))
             }
-            .buttonStyle(.plain)
-            .disabled(viewModel.servers.isEmpty || viewModel.state == .connecting || viewModel.state == .reconnecting)
+            .buttonStyle(.plain).disabled(viewModel.servers.isEmpty || viewModel.state == .connecting || viewModel.state == .reconnecting)
         }
-        .padding(16)
-        .background(panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 28))
+        .padding(16).background(panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 28))
     }
 
     private var pingPanel: some View {
@@ -144,10 +131,10 @@ struct HomeView: View {
         }
     }
 
-    private func announcementCard(_ announcement: DarkTunnelAnnouncement) -> some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "megaphone.fill").foregroundStyle(accent)
-                .frame(width: 34, height: 34).background(accent.opacity(0.15), in: Circle())
+    private func announcementCard(_ announcement: DarkTunnelRemoteAnnouncement) -> some View {
+        let color = announcement.accentColor
+        return HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "megaphone.fill").foregroundStyle(color).frame(width: 34, height: 34).background(color.opacity(0.16), in: Circle())
             VStack(alignment: .leading, spacing: 3) {
                 Text(announcement.title).font(.subheadline.weight(.bold))
                 Text(announcement.body).font(.caption).foregroundStyle(.secondary).lineLimit(3)
@@ -156,7 +143,7 @@ struct HomeView: View {
         }
         .padding(13)
         .background(panel.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.07), lineWidth: 1) }
+        .overlay { RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.75), lineWidth: 1.4) }
     }
 
     private func pill(icon: String, title: String, subtitle: String) -> some View {
@@ -167,18 +154,14 @@ struct HomeView: View {
                 Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
     }
 
     private func metric(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).foregroundStyle(accent).frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.caption.weight(.semibold))
-                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
-            }
+            VStack(alignment: .leading, spacing: 1) { Text(title).font(.caption.weight(.semibold)); Text(subtitle).font(.caption2).foregroundStyle(.secondary) }
             Spacer()
         }
         .padding(.horizontal, 11).padding(.vertical, 9).frame(maxWidth: .infinity)
@@ -198,20 +181,13 @@ struct HomeView: View {
         let span: MKCoordinateSpan
         if viewModel.state == .connected {
             coordinate = CLLocationCoordinate2D(latitude: viewModel.selectedServer.latitude, longitude: viewModel.selectedServer.longitude)
-            // Close city-level view, matching the reference screenshot instead
-            // of the previous country/region-level 6.5° zoom.
             span = MKCoordinateSpan(latitudeDelta: 0.55, longitudeDelta: 0.90)
         } else {
             coordinate = moscow
-            // Moscow city view: roughly the same framing as the reference
-            // screenshot, while still leaving the whole city visible.
             span = MKCoordinateSpan(latitudeDelta: 0.55, longitudeDelta: 0.90)
         }
         let region = MKCoordinateRegion(center: coordinate, span: span)
-        if animated {
-            withAnimation(.easeInOut(duration: 1.1)) { camera = .region(region) }
-        } else {
-            camera = .region(region)
-        }
+        if animated { withAnimation(.easeInOut(duration: 1.1)) { camera = .region(region) } }
+        else { camera = .region(region) }
     }
 }
