@@ -44,7 +44,7 @@ def button(text: str, data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=text, callback_data=data)
 
 
-@router.callback_query(F.data == "announcements")
+@router.callback_query(F.data == "announcement:list")
 async def list_announcements(callback: CallbackQuery, state: FSMContext) -> None:
     if not owner(callback.from_user.id):
         await callback.answer("Доступ запрещён", show_alert=True)
@@ -83,7 +83,7 @@ async def new_announcement(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await callback.message.edit_text(
             "<b>📢 Новое объявление · 1/4</b>\n\nОтправьте короткий заголовок.",
-            reply_markup=kb([[button("❌ Отмена", "announcements")]]),
+            reply_markup=kb([[button("❌ Отмена", "announcement:list")]]),
             parse_mode="HTML",
         )
     await callback.answer()
@@ -120,7 +120,7 @@ async def announcement_body(message: Message, state: FSMContext) -> None:
             [button("🏠 Главный экран", "announcement:place:home")],
             [button("🖥 Серверы", "announcement:place:servers")],
             [button("🏠 + 🖥 Везде", "announcement:place:both")],
-            [button("❌ Отмена", "announcements")],
+            [button("❌ Отмена", "announcement:list")],
         ]),
         parse_mode="HTML",
     )
@@ -143,7 +143,7 @@ async def announcement_place(callback: CallbackQuery, state: FSMContext) -> None
     for index in range(0, len(items), 2):
         rows.append([button(items[index][0], f"announcement:color:{items[index][1]}"), button(items[index + 1][0], f"announcement:color:{items[index + 1][1]}")])
     rows.append([button("🎨 Свой HEX", "announcement:color:custom")])
-    rows.append([button("❌ Отмена", "announcements")])
+    rows.append([button("❌ Отмена", "announcement:list")])
     if callback.message:
         await callback.message.edit_text(
             "<b>📢 Новое объявление · 4/4</b>\n\nВыберите цвет акцента.",
@@ -215,7 +215,7 @@ async def create_announcement(message_or_callback, state: FSMContext, color: str
         await session.commit()
     await state.clear()
     if hasattr(message_or_callback, "edit_text"):
-        await message_or_callback.edit_text("<b>📢 Объявление опубликовано</b>", reply_markup=kb([[button("📢 Все объявления", "announcements")]]), parse_mode="HTML")
+        await message_or_callback.edit_text("<b>📢 Объявление опубликовано</b>", reply_markup=kb([[button("📢 Все объявления", "announcement:list")]]), parse_mode="HTML")
     else:
         await message_or_callback.answer("<b>📢 Объявление опубликовано</b>", parse_mode="HTML")
 
