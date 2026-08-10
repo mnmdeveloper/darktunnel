@@ -1,4 +1,4 @@
-name: iOS Unsigned IPA
+name: Build unsigned IPA for ESign
 
 on:
   workflow_dispatch:
@@ -13,47 +13,87 @@ on:
       - 'DarkTunnel.xcodeproj/**'
       - '.github/workflows/ios-unsigned-ipa.yml'
 
+permissions:
+  contents: read
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  SCHEME: DarkTunnel
+  PROJECT: DarkTunnel.xcodeproj
+
 jobs:
-  build:
+  build-unsigned-ipa:
+    name: Build unsigned IPA for ESign
     runs-on: macos-15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          set -euo pipefail
+          xcode-select -p
           xcodebuild -version
 
-      - name: Build unsigned archive
+      - name: Show project targets
+        run: |
+          set -euo pipefail
+          xcodebuild -project "$PROJECT" -list
+
+      - name: Build unsigned app
         run: |
           set -euo pipefail
           rm -rf build
-          xcodebuild clean archive \
-            -project DarkTunnel.xcodeproj \
-            -scheme DarkTunnel \
+          mkdir -p build
+
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath "$PWD/build/DarkTunnel.xcarchive" \
             -derivedDataPath "$PWD/build/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
             DEVELOPMENT_TEAM=''
 
-      - name: Package unsigned IPA
+      - name: Locate DarkTunnel.app
+        id: locate_app
         run: |
           set -euo pipefail
-          APP="$PWD/build/DarkTunnel.xcarchive/Products/Applications/DarkTunnel.app"
-          test -d "$APP"
+          APP="$(find "$PWD/build/DerivedData/Build/Products" -type d -path '*/Release-iphoneos/DarkTunnel.app' -print -quit)"
+          test -n "$APP"
+          test -f "$APP/Info.plist"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "Unsigned app: $APP"
+
+      - name: Verify unsigned app bundle
+        env:
+          APP: ${{ steps.locate_app.outputs.app }}
+        run: |
+          set -euo pipefail
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" || true
+          test ! -e "$APP/_CodeSignature"
+          find "$APP" -maxdepth 2 -type d -name '*.appex' -print
+
+      - name: Package IPA for ESign
+        env:
+          APP: ${{ steps.locate_app.outputs.app }}
+        run: |
+          set -euo pipefail
           rm -rf build/Payload build/DarkTunnel-unsigned.ipa
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/DarkTunnel.app
           cd build
-          /usr/bin/zip -qry DarkTunnel-unsigned.ipa Payload
+          /usr/bin/zip -qry -X DarkTunnel-unsigned.ipa Payload
+          test -s DarkTunnel-unsigned.ipa
+          unzip -l DarkTunnel-unsigned.ipa | head -40
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
