@@ -12,7 +12,7 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = UserDefaults.standard.bool(forKey: "disconnectOnSleep") { didSet { UserDefaults.standard.set(disconnectOnSleep, forKey: "disconnectOnSleep") } }
     @Published var reconnectAfterWake = UserDefaults.standard.object(forKey: "reconnectAfterWake") as? Bool ?? true { didSet { UserDefaults.standard.set(reconnectAfterWake, forKey: "reconnectAfterWake") } }
     @Published var routeAPNsThroughVPN = UserDefaults.standard.bool(forKey: "routeAPNsThroughVPN") { didSet { UserDefaults.standard.set(routeAPNsThroughVPN, forKey: "routeAPNsThroughVPN") } }
-    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true { didSet { UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled"); if !liveActivitiesEnabled { LiveActivityController.shared.end() } } }
+    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true { didSet { UserDefaults.standard.set(liveActivitiesEnabled.rawValue, forKey: "liveActivitiesEnabled"); if !liveActivitiesEnabled { LiveActivityController.shared.end() } } }
     @Published var connectionError: String?
     @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
     @Published private(set) var servers: [VPNServer] = []
@@ -61,11 +61,14 @@ final class VPNViewModel: ObservableObject {
         do {
             let fetched = try await ServerDirectoryClient.shared.fetchServers()
             var merged = ServerDirectoryCache.merge(fetched, provisioned: ActivationStore.shared.serverProfile)
+            let secureServers = await ServerDirectoryClient.shared.fetchActivatedServers(fetched.map(\.id))
+            for secure in secureServers { merged = ServerDirectoryCache.mergeSecure(secure, into: merged) }
             if let securePrimary = try? await ServerDirectoryClient.shared.fetchActivatedPrimary() { merged = ServerDirectoryCache.mergeSecure(securePrimary, into: merged) }
             ServerDirectoryCache.save(merged)
             apply(merged, preserveSelection: true)
             connectionError = nil
-            AppLog.shared.info("Servers", "Список серверов обновлён: \(servers.count)")
+            let awgCount = secureServers.filter { !($0.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }.count
+            AppLog.shared.info("Servers", "Список серверов обновлён: \(servers.count), AWG-профилей: \(awgCount)")
         } catch {
             if servers.isEmpty { restoreLocalServers() }
             if servers.isEmpty { connectionError = "Нет сохранённой конфигурации сервера" }
@@ -139,32 +142,20 @@ final class VPNViewModel: ObservableObject {
     func select(_ server: VPNServer) { usesAutomaticServer = false; selectedServer = server; reconnectIfNeeded() }
 
     private func ensureAmneziaProfile() async -> Bool {
-        let candidates: [VPNServer]
-        if usesAutomaticServer {
-            candidates = servers.sorted(by: latencyOrder)
-        } else {
-            candidates = [selectedServer]
-        }
-
+        let candidates: [VPNServer] = usesAutomaticServer ? servers.sorted(by: latencyOrder) : [selectedServer]
         for candidate in candidates {
             guard let remote = remoteServers[candidate.id] else { continue }
             if remote.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                 selectedServer = candidate
                 return true
             }
-
             guard let secure = try? await ServerDirectoryClient.shared.fetchActivatedServer(remote.id) else { continue }
             let merged = ServerDirectoryCache.mergeSecure(secure, into: Array(remoteServers.values))
             ServerDirectoryCache.save(merged)
             remoteServers = Dictionary(uniqueKeysWithValues: merged.map { ($0.displayModel.id, $0) })
-            if let refreshed = merged.first(where: { $0.id == secure.id || ($0.host == secure.host && $0.port == secure.port) }) {
-                selectedServer = refreshed.displayModel
-            } else {
-                selectedServer = secure.displayModel
-            }
-            return secure.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            selectedServer = secure.displayModel
+            if secure.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { return true }
         }
-
         return false
     }
 
