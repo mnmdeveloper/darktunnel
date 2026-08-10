@@ -146,15 +146,15 @@ jobs:
           rm -rf "$FRAMEWORK"
           mkdir -p "$FRAMEWORK/Headers"
 
-          # Go's iOS port supports c-archive, but not c-shared. Build the Go
-          # runtime as a c-archive first, then turn that archive into the
-          # dynamic library inside a real iOS framework with Apple's linker.
+          # iOS Go supports c-archive, not c-shared. A plain archive is not
+          # pulled into a dylib unless it satisfies an undefined symbol, so
+          # force-load the complete Go archive into the framework binary.
           clang -dynamiclib \
             -arch arm64 \
             -isysroot "$SDKROOT" \
             -miphoneos-version-min=17.0 \
             -Wl,-no_adhoc_codesign \
-            -Wl,-dead_strip \
+            -Wl,-force_load,"$ARCHIVE" \
             -Wl,-install_name,@rpath/AmneziaWG.framework/AmneziaWG \
             -Wl,-headerpad_max_install_names \
             "$ARCHIVE" \
@@ -165,10 +165,6 @@ jobs:
             -o "$FRAMEWORK/AmneziaWG"
 
           test -s "$FRAMEWORK/AmneziaWG"
-          # The PacketTunnel target already owns the stable namespaced bridge
-          # declarations. The Go archive does not reliably emit a companion
-          # header when built by the upstream Makefile, so use that source
-          # header rather than assuming out/libwg-go.h exists.
           cp "$GITHUB_WORKSPACE/PacketTunnel/AmneziaWGBridge.h" "$FRAMEWORK/Headers/AmneziaWG.h"
           cp "$GITHUB_WORKSPACE/PacketTunnel/AmneziaWGBridge.h" "$FRAMEWORK/AmneziaWG.h"
           cat > "$FRAMEWORK/Info.plist" <<'PLIST'
