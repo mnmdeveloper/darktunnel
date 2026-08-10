@@ -119,6 +119,17 @@ struct SettingsView: View {
             toggleRow(icon: "bell.badge.fill", title: "Уведомления через VPN", subtitle: "Сохранять настройку для полного туннеля; Push при полном VPN-маршруте идёт через VPN", isOn: $viewModel.routeAPNsThroughVPN)
             Divider().overlay(.white.opacity(0.07))
             toggleRow(icon: "rectangle.on.rectangle.angled", title: "Live Activity и Dynamic Island", subtitle: "Показывать сервер, пинг и кнопку отключения", isOn: $viewModel.liveActivitiesEnabled)
+            Button { viewModel.repairLiveActivity() } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: viewModel.state == .connected ? "arrow.clockwise.circle.fill" : "xmark.circle.fill")
+                    Text(viewModel.state == .connected ? "Включить / обновить Live Activity" : "Убрать Live Activity")
+                    Spacer()
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
         }
     }
 
