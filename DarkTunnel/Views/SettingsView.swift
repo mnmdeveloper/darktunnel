@@ -40,7 +40,10 @@ struct SettingsView: View {
         .sheet(isPresented: $showingSubscriptionEditor) {
             subscriptionEditor.presentationDetents([.height(250)]).presentationBackground(.ultraThinMaterial)
         }
-        .task { await announcements.refresh() }
+        .task {
+            await viewModel.refreshServers()
+            await announcements.refresh()
+        }
     }
 
     private var speedSection: some View {
@@ -55,7 +58,11 @@ struct SettingsView: View {
             HStack {
                 Text("СЕРВЕР").font(.caption.weight(.bold)).tracking(1.2).foregroundStyle(.secondary)
                 Spacer()
-                Text("обновлено автоматически").font(.caption2).foregroundStyle(.tertiary)
+                if viewModel.isRefreshingServers {
+                    ProgressView().scaleEffect(0.7)
+                } else {
+                    Text("пинг обновлён автоматически").font(.caption2).foregroundStyle(.tertiary)
+                }
             }.padding(.horizontal, 5)
             if let announcement = announcements.servers.first {
                 HStack(alignment: .top, spacing: 10) {
