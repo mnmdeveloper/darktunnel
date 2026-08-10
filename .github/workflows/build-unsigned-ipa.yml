@@ -33,7 +33,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
           cache: true
           cache-dependency-path: |
             Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
@@ -59,26 +59,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Do not let GNU patch create temporary backup files on the macOS
-          # runner. The upstream Makefile patches a copied Go runtime, but the
-          # runner can reject patch's temporary-file operation. We apply the
-          # tiny upstream runtime patch ourselves and pre-create .prepared;
-          # make then skips the patch recipe entirely.
-          PATCH_TMP="$PWD/.patch-tmp"
+          # AmneziaWG Apple master currently requires Go 1.26. The upstream
+          # Makefile copies GOROOT and patches the Darwin runtime. macOS CI can
+          # preserve read-only mode bits from the Go distribution, so prepare a
+          # writable private GOROOT and bypass the upstream patch recipe.
           BUILD_TMP="$PWD/.build-tmp"
           GOROOT_COPY="$BUILD_TMP/wireguard-go-bridge/goroot"
-          rm -rf "$PATCH_TMP" "$BUILD_TMP" out
-          mkdir -p "$PATCH_TMP" "$BUILD_TMP" out
-          chmod 700 "$PATCH_TMP" "$BUILD_TMP" out
+          rm -rf "$BUILD_TMP" out
+          mkdir -p "$GOROOT_COPY" out
+          chmod -R u+rwX "$BUILD_TMP" out
 
           chmod -R u+rwX .
           make clean
 
           REAL_GOROOT="$(go env GOROOT)"
-          mkdir -p "$GOROOT_COPY"
           rsync -a --delete --exclude=pkg/obj/go-build "$REAL_GOROOT/" "$GOROOT_COPY/"
-          # rsync preserves the read-only mode bits from Apple's Go toolchain.
-          # The runtime patch must modify files in the copied GOROOT.
           chmod -R u+rwX "$GOROOT_COPY"
 
           python3 - "$GOROOT_COPY" <<'PY'
@@ -101,12 +96,18 @@ jobs:
           for rel, pairs in replacements.items():
               path = root / rel
               text = path.read_text()
+              changed = False
               for old, new in pairs:
-                  if old not in text:
-                      raise SystemExit(f"Expected text not found in {path}: {old}")
-                  text = text.replace(old, new)
-              path.write_text(text)
-              print(f"patched {path}")
+                  if old in text:
+                      text = text.replace(old, new)
+                      changed = True
+                  elif new in text:
+                      print(f"already patched: {path}")
+                  else:
+                      raise SystemExit(f"Expected runtime symbol not found in {path}: {old} or {new}")
+              if changed:
+                  path.write_text(text)
+                  print(f"patched {path}")
 
           prepared = root / ".prepared"
           prepared.touch()
@@ -118,6 +119,7 @@ jobs:
           ARCHS=arm64 \
           CONFIGURATION_TEMP_DIR="$BUILD_TMP" \
           CONFIGURATION_BUILD_DIR="$PWD/out" \
+          GOROOT="$GOROOT_COPY" \
           make build
 
           test -f out/libwg-go.a
