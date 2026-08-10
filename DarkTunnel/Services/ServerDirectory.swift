@@ -33,7 +33,7 @@ struct RemoteVPNServer: Codable, Identifiable, Equatable {
 
     var displayModel: VPNServer {
         let capital = CapitalCoordinates.forCountry(countryCode)
-        return VPNServer(id: UUID(uuidString: id) ?? Self.stableUUID(for: host, port: port), name: name, country: countryName.isEmpty ? name : countryName, city: city.isEmpty ? name : city, flag: Self.flag(for: countryCode), latitude: capital?.latitude ?? latitude ?? 55.7558, longitude: capital?.longitude ?? longitude ?? 37.6173, latencyMilliseconds: latencyMS ?? 0)
+        return VPNServer(id: UUID(uuidString: id) ?? Self.stableUUID(for: host, port: port), name: name, country: countryName.isEmpty ? name : countryName, city: city.isEmpty ? name : city, flag: Self.flag(for: countryCode), latitude: latitude ?? capital?.latitude ?? 55.7558, longitude: longitude ?? capital?.longitude ?? 37.6173, latencyMilliseconds: latencyMS ?? 0)
     }
 
     var tunnelProfile: DarkTunnelServerProfile {
@@ -126,9 +126,7 @@ actor ServerDirectoryClient {
 
     func fetchActivatedServers(_ serverIDs: [String]) async -> [RemoteVPNServer] {
         await withTaskGroup(of: RemoteVPNServer?.self, returning: [RemoteVPNServer].self) { group in
-            for id in serverIDs {
-                group.addTask { try? await self.fetchActivatedServer(id) }
-            }
+            for id in serverIDs { group.addTask { try? await self.fetchActivatedServer(id) } }
             var result: [RemoteVPNServer] = []
             for await server in group { if let server { result.append(server) } }
             return result
