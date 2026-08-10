@@ -20,6 +20,7 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
   SCHEME: DarkTunnel
   PROJECT: DarkTunnel.xcodeproj
+  IPA_PATH: build/DarkTunnel-unsigned.ipa
 
 jobs:
   build-unsigned-ipa:
@@ -27,26 +28,30 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Checkout
+      - name: 📦 Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Select Xcode
+      - name: 🛠️ Select Xcode
         run: |
           set -euo pipefail
-          xcode-select -p
+          echo "Xcode:"
           xcodebuild -version
+          echo "Developer directory:"
+          xcode-select -p
+          echo "macOS:"
+          sw_vers
 
-      - name: Show project targets
+      - name: 🔎 Show project targets
         run: |
           set -euo pipefail
           xcodebuild -project "$PROJECT" -list
 
-      - name: Build unsigned app
+      - name: 🏗️ Build unsigned app
         run: |
-          set -euo pipefail
+          set -o pipefail
           rm -rf build
           mkdir -p build
 
@@ -60,9 +65,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
-            DEVELOPMENT_TEAM=''
+            DEVELOPMENT_TEAM='' \
+            2>&1 | tee build/xcodebuild.log
 
-      - name: Locate DarkTunnel.app
+      - name: 📍 Locate DarkTunnel.app
         id: locate_app
         run: |
           set -euo pipefail
@@ -72,33 +78,96 @@ jobs:
           echo "app=$APP" >> "$GITHUB_OUTPUT"
           echo "Unsigned app: $APP"
 
-      - name: Verify unsigned app bundle
+      - name: ✅ Verify unsigned app bundle
         env:
           APP: ${{ steps.locate_app.outputs.app }}
         run: |
           set -euo pipefail
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" || true
-          test ! -e "$APP/_CodeSignature"
-          find "$APP" -maxdepth 2 -type d -name '*.appex' -print
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" 2>/dev/null || echo unknown)"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist" 2>/dev/null || echo unknown)"
 
-      - name: Package IPA for ESign
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Version:   $VERSION ($BUILD)"
+          echo "Extensions:"
+          find "$APP/PlugIns" -maxdepth 1 -type d -name '*.appex' -print 2>/dev/null || true
+
+          test ! -e "$APP/_CodeSignature"
+          test -d "$APP/PlugIns/PacketTunnel.appex"
+          test -d "$APP/PlugIns/DarkTunnelLiveActivity.appex"
+
+          {
+            echo "bundle_id=$BUNDLE_ID"
+            echo "version=$VERSION"
+            echo "build=$BUILD"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Package IPA for ESign
         env:
           APP: ${{ steps.locate_app.outputs.app }}
         run: |
           set -euo pipefail
-          rm -rf build/Payload build/DarkTunnel-unsigned.ipa
+          rm -rf build/Payload "$IPA_PATH"
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/DarkTunnel.app
           cd build
           /usr/bin/zip -qry -X DarkTunnel-unsigned.ipa Payload
           test -s DarkTunnel-unsigned.ipa
-          unzip -l DarkTunnel-unsigned.ipa | head -40
+          echo "IPA: $PWD/DarkTunnel-unsigned.ipa"
+          echo "Size: $(du -h DarkTunnel-unsigned.ipa | cut -f1)"
+          echo "Contents:"
+          unzip -l DarkTunnel-unsigned.ipa | grep -E 'DarkTunnel.app/(Info.plist|PlugIns/.*\.appex/)' | head -80
 
-      - name: Upload unsigned IPA
+      - name: 📤 Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: DarkTunnel-unsigned-IPA
           path: build/DarkTunnel-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: 📝 Write build summary
+        if: always()
+        env:
+          APP: ${{ steps.locate_app.outputs.app }}
+        run: |
+          set -euo pipefail
+          {
+            echo '# 🚀 DarkTunnel — unsigned IPA'
+            echo
+            echo '## Build'
+            echo "- **Workflow:** ${GITHUB_WORKFLOW}"
+            echo "- **Run:** #${GITHUB_RUN_NUMBER}"
+            echo "- **Commit:** \`${GITHUB_SHA:0:7}\`"
+            echo "- **Branch:** \`${GITHUB_REF_NAME}\`"
+            echo "- **Runner:** ${RUNNER_NAME}"
+            echo "- **Xcode:** $(xcodebuild -version | tr '\n' ' ')"
+            echo
+            echo '## Artifact'
+            if [ -f "$IPA_PATH" ]; then
+              echo '- **Status:** ✅ IPA created successfully'
+              echo "- **File:** \`DarkTunnel-unsigned.ipa\`"
+              echo "- **Size:** $(du -h "$IPA_PATH" | cut -f1)"
+            else
+              echo '- **Status:** ❌ IPA was not created'
+            fi
+            echo
+            echo '## Extensions'
+            if [ -n "${APP:-}" ] && [ -d "$APP/PlugIns" ]; then
+              find "$APP/PlugIns" -maxdepth 1 -type d -name '*.appex' -printf '%f\n' | sed 's/^/- /' || true
+            else
+              echo '- unavailable'
+            fi
+            echo
+            echo '## Next step'
+            echo 'Download **DarkTunnel-unsigned-IPA** from the Artifacts section and sign/install it with ESign.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📋 Upload Xcode build log
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkTunnel-xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
