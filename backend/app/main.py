@@ -9,7 +9,7 @@ from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
-from .models import Activation, Announcement, Device, ServerHealth, ServerNode
+from .models import Activation, Announcement, Device, ServerHealth, ServerNode, ServerTransport
 from .node_agent import NodeReport, apply_report, check_agent_token, generate_agent_token, put_agent_token
 from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
 from .security import decode_activation_token, hash_token
@@ -62,6 +62,39 @@ async def client_announcements(session: AsyncSession = Depends(get_session)) -> 
     return {"announcements": [{"id": str(row.id), "title": row.title, "body": row.body, "placement": row.placement, "created_at": row.created_at.isoformat()} for row in rows]}
 
 
+async def _activated_client_config(session: AsyncSession, node: ServerNode) -> dict[str, object]:
+    """Load the node config and, for AWG, fall back to the transport-specific encrypted config.
+
+    Older provisioning stored AmneziaWG in ServerTransport.encrypted_config while
+    the activation endpoint only looked at ServerNode.encrypted_config. That made
+    the iOS client report "no AmneziaWG configuration" even though AWG was installed
+    and provisioned on the node.
+    """
+    try:
+        config = decrypt_server_config(node.encrypted_config)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
+
+    transport = await session.scalar(
+        select(ServerTransport).where(
+            ServerTransport.server_id == node.id,
+            ServerTransport.transport_type == "amneziawg2",
+            ServerTransport.enabled.is_(True),
+        )
+    )
+    if transport is not None and transport.encrypted_config:
+        try:
+            transport_config = decrypt_server_config(transport.encrypted_config)
+        except Exception:
+            transport_config = {}
+        if not str(config.get("awg_client_config", "")).strip():
+            awg_client_config = str(transport_config.get("awg_client_config", "")).strip()
+            if awg_client_config:
+                config["awg_client_config"] = awg_client_config
+
+    return config
+
+
 @app.get("/v1/activation/server-profile")
 async def activation_server_profile(token: str, installation_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     try:
@@ -84,10 +117,7 @@ async def activation_server_profile(token: str, installation_id: str, session: A
     if node is None:
         raise HTTPException(status_code=503, detail="Primary server unavailable")
     health = await session.scalar(select(ServerHealth).where(ServerHealth.server_id == node.id).order_by(ServerHealth.timestamp.desc()).limit(1))
-    try:
-        config = decrypt_server_config(node.encrypted_config)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
+    config = await _activated_client_config(session, node)
 
     return {"server": {
         "id": str(node.id),
@@ -107,7 +137,7 @@ async def activation_server_profile(token: str, installation_id: str, session: A
         "dns": node.dns,
         "latency_ms": health.latency_ms if health else None,
         "online": bool(health.online) if health else True,
-        "amnezia_config": str(config.get("awg_client_config", "")) or None,
+        "amnezia_config": str(config.get("awg_client_config", "")).strip() or None,
     }}
 
 
@@ -141,11 +171,7 @@ async def activation_server_profile_for_node(
     if node is None:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    try:
-        config = decrypt_server_config(node.encrypted_config)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
-
+    config = await _activated_client_config(session, node)
     awg_config = str(config.get("awg_client_config", "")).strip()
     if not awg_config:
         raise HTTPException(status_code=404, detail="AmneziaWG is not provisioned for this server")
