@@ -12,6 +12,7 @@ on:
       - 'LiveActivity/**'
       - 'Shared/**'
       - 'Vendor/**'
+      - 'scripts/**'
       - 'project-unsigned.yml'
       - '.github/workflows/ios-unsigned-ipa.yml'
 
@@ -178,6 +179,13 @@ jobs:
           PLIST
           otool -L "$FRAMEWORK/AmneziaWG"
           nm -gU "$FRAMEWORK/AmneziaWG" | grep -E ' _?awg(SetLogger|TurnOn|TurnOff|SetConfig|GetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'
+
+      - name: Patch PacketTunnel AmneziaWG startup
+        run: |
+          set -euo pipefail
+          python3 scripts/patch-packet-tunnel-runtime.py
+          grep -F 'awgTurnOn($0, descriptor)' PacketTunnel/PacketTunnelProvider.swift
+          grep -F 'DispatchQueue.global(qos: .userInitiated)' PacketTunnel/PacketTunnelProvider.swift
 
       - name: Generate Xcode project
         run: |
