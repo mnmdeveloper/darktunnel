@@ -139,7 +139,7 @@ struct HomeView: View {
     private var pingPanel: some View {
         HStack(spacing: 8) {
             pill(icon: "location.fill", title: viewModel.selectedServer.flag, subtitle: viewModel.selectedServer.country.isEmpty ? "Сервер" : viewModel.selectedServer.country)
-            pill(icon: "timer", title: viewModel.pingText, subtitle: "пинг")
+            pill(icon: "timer", title: viewModel.pingText, subtitle: viewModel.state == .connected ? "пинг · 7 сек" : "пинг сервера")
             pill(icon: "antenna.radiowaves.left.and.right", title: viewModel.networkName, subtitle: viewModel.activeTransport.rawValue)
         }
     }
@@ -198,10 +198,14 @@ struct HomeView: View {
         let span: MKCoordinateSpan
         if viewModel.state == .connected {
             coordinate = CLLocationCoordinate2D(latitude: viewModel.selectedServer.latitude, longitude: viewModel.selectedServer.longitude)
-            span = MKCoordinateSpan(latitudeDelta: 6.5, longitudeDelta: 9.0)
+            // Close city-level view, matching the reference screenshot instead
+            // of the previous country/region-level 6.5° zoom.
+            span = MKCoordinateSpan(latitudeDelta: 0.55, longitudeDelta: 0.90)
         } else {
             coordinate = moscow
-            span = MKCoordinateSpan(latitudeDelta: 5.5, longitudeDelta: 8.5)
+            // Moscow city view: roughly the same framing as the reference
+            // screenshot, while still leaving the whole city visible.
+            span = MKCoordinateSpan(latitudeDelta: 0.55, longitudeDelta: 0.90)
         }
         let region = MKCoordinateRegion(center: coordinate, span: span)
         if animated {
