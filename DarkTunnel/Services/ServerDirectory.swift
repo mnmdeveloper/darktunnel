@@ -93,7 +93,7 @@ enum ServerDirectoryCache {
     }
     static func mergeSecure(_ secure: RemoteVPNServer, into servers: [RemoteVPNServer]) -> [RemoteVPNServer] {
         var result = servers
-        if let index = result.firstIndex(where: { $0.host == secure.host && $0.port == secure.port }) { result[index] = secure }
+        if let index = result.firstIndex(where: { $0.id == secure.id || ($0.host == secure.host && $0.port == secure.port) }) { result[index] = secure }
         else { result.insert(secure, at: 0) }
         return result
     }
@@ -117,7 +117,17 @@ actor ServerDirectoryClient {
 
     func fetchActivatedPrimary() async throws -> RemoteVPNServer {
         guard let token = KeychainStore.readString(account: "activation-token"), !token.isEmpty else { throw ServerDirectoryError.invalidResponse }
-        var components = URLComponents(url: baseURL.appending(path: "/v1/activation/server-profile"), resolvingAgainstBaseURL: false)!
+        return try await fetchActivatedServer(path: "/v1/activation/server-profile")
+    }
+
+    func fetchActivatedServer(_ serverID: String) async throws -> RemoteVPNServer {
+        guard UUID(uuidString: serverID) != nil else { throw ServerDirectoryError.invalidResponse }
+        return try await fetchActivatedServer(path: "/v1/activation/server-profile/\(serverID)")
+    }
+
+    private func fetchActivatedServer(path: String) async throws -> RemoteVPNServer {
+        guard let token = KeychainStore.readString(account: "activation-token"), !token.isEmpty else { throw ServerDirectoryError.invalidResponse }
+        var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "token", value: token), URLQueryItem(name: "installation_id", value: DeviceIdentity.installationID)]
         guard let url = components.url else { throw ServerDirectoryError.invalidResponse }
         var request = URLRequest(url: url)
