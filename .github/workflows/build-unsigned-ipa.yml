@@ -59,67 +59,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          # AmneziaWG Apple master currently requires Go 1.26. The upstream
-          # Makefile copies GOROOT and patches the Darwin runtime. macOS CI can
-          # preserve read-only mode bits from the Go distribution, so prepare a
-          # writable private GOROOT and bypass the upstream patch recipe.
+          # Use the upstream AmneziaWG Makefile as-is. It copies GOROOT and
+          # applies its own goruntime-*.diff before building libwg-go.a.
+          # The only CI-specific workaround is making rsync preserve the
+          # copied runtime as writable, because macOS Go distributions can
+          # contain read-only files and patch must edit them.
           BUILD_TMP="$PWD/.build-tmp"
-          GOROOT_COPY="$BUILD_TMP/wireguard-go-bridge/goroot"
           rm -rf "$BUILD_TMP" out
-          mkdir -p "$GOROOT_COPY" out
+          mkdir -p "$BUILD_TMP" out
           chmod -R u+rwX "$BUILD_TMP" out
-
           chmod -R u+rwX .
+
+          REAL_RSYNC="$(command -v rsync)"
+          mkdir -p "$BUILD_TMP/bin"
+          cat > "$BUILD_TMP/bin/rsync" <<EOF
+          #!/bin/sh
+          exec "$REAL_RSYNC" --chmod=u+rwX "\$@"
+          EOF
+          chmod 755 "$BUILD_TMP/bin/rsync"
+          export PATH="$BUILD_TMP/bin:$PATH"
+
           make clean
-
-          REAL_GOROOT="$(go env GOROOT)"
-          rsync -a --delete --exclude=pkg/obj/go-build "$REAL_GOROOT/" "$GOROOT_COPY/"
-          chmod -R u+rwX "$GOROOT_COPY"
-
-          python3 - "$GOROOT_COPY" <<'PY'
-          import sys
-          from pathlib import Path
-
-          root = Path(sys.argv[1])
-          replacements = {
-              "src/runtime/sys_darwin.go": [
-                  ("libc_mach_absolute_time", "libc_mach_continuous_time"),
-              ],
-              "src/runtime/sys_darwin_amd64.s": [
-                  ("CALL libc_mach_absolute_time(SB)", "CALL libc_mach_continuous_time(SB)"),
-              ],
-              "src/runtime/sys_darwin_arm64.s": [
-                  ("BL libc_mach_absolute_time(SB)", "BL libc_mach_continuous_time(SB)"),
-              ],
-          }
-
-          for rel, pairs in replacements.items():
-              path = root / rel
-              text = path.read_text()
-              changed = False
-              for old, new in pairs:
-                  if old in text:
-                      text = text.replace(old, new)
-                      changed = True
-                  elif new in text:
-                      print(f"already patched: {path}")
-                  else:
-                      raise SystemExit(f"Expected runtime symbol not found in {path}: {old} or {new}")
-              if changed:
-                  path.write_text(text)
-                  print(f"patched {path}")
-
-          prepared = root / ".prepared"
-          prepared.touch()
-          print(f"prepared {prepared}")
-          PY
 
           PLATFORM_NAME=iphoneos \
           SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
           ARCHS=arm64 \
           CONFIGURATION_TEMP_DIR="$BUILD_TMP" \
           CONFIGURATION_BUILD_DIR="$PWD/out" \
-          GOROOT="$GOROOT_COPY" \
           make build
 
           test -f out/libwg-go.a
