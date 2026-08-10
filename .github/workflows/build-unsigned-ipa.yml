@@ -1,4 +1,4 @@
-name: Build unsigned IPA for ESign
+name: DarkTunnel — Build unsigned IPA for ESign
 
 on:
   push:
@@ -6,32 +6,38 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: unsigned-ipa-main
+  group: darktunnel-unsigned-ipa-main
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  build-unsigned-ipa:
+    name: DarkTunnel — unsigned IPA (ESign)
     runs-on: macos-15
 
     steps:
-      - name: Checkout DarkTunnel
+      - name: 📦 Checkout DarkTunnel
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Checkout VK TURN engine
+      - name: 🔌 Checkout VK TURN engine
         uses: actions/checkout@v4
         with:
           repository: anton48/vk-turn-proxy-ios
           ref: main
           path: Vendor/vk-turn-proxy-ios
 
-      - name: Checkout AmneziaWG Apple engine
+      - name: 🛡️ Checkout AmneziaWG Apple engine
         uses: actions/checkout@v4
         with:
           repository: amnezia-vpn/amneziawg-apple
           ref: master
           path: Vendor/amneziawg-apple
 
-      - name: Fix iOS utun descriptor lookup
+      - name: 🧰 Fix iOS utun descriptor lookup
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -42,9 +48,9 @@ jobs:
           text = provider.read_text()
           pattern = r'    private func findTunFileDescriptor\(\) -> Int32\? \{.*?\n    \}'
           replacement = '''    private func findTunFileDescriptor() -> Int32? {
-          let fd = dt_find_utun_fd()
-          return fd >= 0 ? fd : nil
-      }'''
+              let fd = dt_find_utun_fd()
+              return fd >= 0 ? fd : nil
+          }'''
           text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
           if count != 1:
               raise SystemExit('Expected PacketTunnel utun lookup was not found')
@@ -139,7 +145,7 @@ int32_t dt_find_utun_fd(void) {
           print('Applied robust iOS utun descriptor lookup')
           PY
 
-      - name: Namespace AmneziaWG bridge symbols
+      - name: 🛡️ Namespace AmneziaWG bridge symbols
         working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
         run: |
           set -euo pipefail
@@ -173,14 +179,14 @@ int32_t dt_find_utun_fd(void) {
               raise SystemExit('No AmneziaWG bridge symbols found')
           PY
 
-      - name: Verify bridge symbols are namespaced
+      - name: 🔎 Verify AmneziaWG bridge symbols
         run: |
           set -euo pipefail
           grep -q 'awgTurnOn' PacketTunnel/AmneziaWGBridge.h
           grep -q 'awgGetConfig' PacketTunnel/AmneziaWGBridge.h
           ! grep -R -nE '(^|[^A-Za-z])wg(TurnOn|TurnOff|SetConfig|GetConfig|SetLogger|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)\b' Vendor/amneziawg-apple/Sources/WireGuardKitGo --include='*.go'
 
-      - name: Set up Go
+      - name: 🐹 Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
@@ -189,13 +195,15 @@ int32_t dt_find_utun_fd(void) {
             Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
             Vendor/amneziawg-apple/Sources/WireGuardKitGo/go.mod
 
-      - name: Install XcodeGen
+      - name: 🛠️ Install XcodeGen
         run: |
+          set -euo pipefail
           brew install xcodegen
           xcodebuild -version
+          xcodegen --version
           go version
 
-      - name: Build WireGuard TURN bridge
+      - name: 🧱 Build WireGuard TURN bridge
         working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
         run: |
           set -euo pipefail
@@ -205,7 +213,7 @@ int32_t dt_find_utun_fd(void) {
           test -d build/WireGuardTURN.xcframework
           test -f build/WireGuardTURN.xcframework/ios-arm64/libwg-turn-ios-arm64.a
 
-      - name: Build AmneziaWG Apple bridge
+      - name: 🧱 Build AmneziaWG Apple bridge
         working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
         run: |
           set -euo pipefail
@@ -239,14 +247,21 @@ int32_t dt_find_utun_fd(void) {
             exit 1
           fi
 
-      - name: Generate unsigned Xcode project
+      - name: 🧩 Generate Xcode project
         run: |
           set -euo pipefail
+          test -f project-unsigned.yml
           xcodegen generate --spec project-unsigned.yml
           test -f DarkTunnel.xcodeproj/project.pbxproj
           test -f Vendor/amneziawg-apple/Sources/WireGuardKitGo/out/libwg-go.a
+          echo 'Generated DarkTunnel.xcodeproj successfully'
 
-      - name: Build unsigned iOS app
+      - name: 🔍 Show generated Xcode targets
+        run: |
+          set -euo pipefail
+          xcodebuild -project DarkTunnel.xcodeproj -list
+
+      - name: 🏗️ Build unsigned iOS app
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/DerivedData"
@@ -262,32 +277,63 @@ int32_t dt_find_utun_fd(void) {
             CODE_SIGN_IDENTITY='' \
             DEVELOPMENT_TEAM=''
 
-      - name: Package unsigned IPA for ESign
+      - name: 📦 Package unsigned IPA
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
           test -d "$APP_PATH"
+          test -f "$APP_PATH/Info.plist"
           test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
           test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
 
           mkdir -p "$RUNNER_TEMP/package/Payload"
-          cp -R "$APP_PATH" "$RUNNER_TEMP/package/Payload/"
-          find "$RUNNER_TEMP/package/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
-          find "$RUNNER_TEMP/package/Payload" -name embedded.mobileprovision -type f -delete
+          cp -R "$APP_PATH" "$RUNNER_TEMP/package/"
+          find "$RUNNER_TEMP/package" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$RUNNER_TEMP/package" -name embedded.mobileprovision -type f -delete
 
           cd "$RUNNER_TEMP/package"
-          /usr/bin/zip -qry "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" Payload
+          /usr/bin/zip -qry -X "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" Payload
           test -s "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa"
+          ls -lh "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa"
 
-      - name: Inspect IPA
+      - name: 🔎 Verify IPA contents
         run: |
           set -euo pipefail
           unzip -l "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | grep -E 'DarkTunnel.app/(Info.plist|PlugIns/PacketTunnel.appex/|PlugIns/DarkTunnelLiveActivity.appex/)' | head -160
 
-      - name: Upload unsigned IPA
+      - name: 📝 Build summary
+        if: always()
+        run: |
+          {
+            echo '## DarkTunnel — unsigned IPA for ESign'
+            echo
+            echo "- **Commit:** \`${GITHUB_SHA::12}\`"
+            echo "- **Runner:** \`${RUNNER_OS}\`"
+            echo "- **Xcode:** [1m$(xcodebuild -version | head -1)[0m"
+            if [ -f "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" ]; then
+              echo '- **IPA:** ✅ created'
+              echo "- **Size:** $(du -h "$RUNNER_TEMP/DarkTunnel-unsigned-for-ESign.ipa" | cut -f1)"
+            else
+              echo '- **IPA:** ❌ not created'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📤 Upload unsigned IPA for ESign
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: DarkTunnel-unsigned-for-ESign
           path: ${{ runner.temp }}/DarkTunnel-unsigned-for-ESign.ipa
           if-no-files-found: error
           retention-days: 14
+
+      - name: 📋 Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkTunnel-build-logs
+          path: |
+            ${{ runner.temp }}/DerivedData/Logs/**/*.xcactivitylog
+            ${{ runner.temp }}/DerivedData/Build/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
