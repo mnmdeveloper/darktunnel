@@ -66,6 +66,8 @@ targets:
     dependencies:
       - framework: Vendor/vk-turn-proxy-ios/WireGuardBridge/build/WireGuardTURN.xcframework
         embed: false
+      - framework: Vendor/amneziawg-apple/Sources/WireGuardKitGo/out/AmneziaWG.framework
+        embed: true
       - sdk: NetworkExtension.framework
     settings:
       base:
@@ -77,16 +79,17 @@ targets:
         HEADER_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/include"
-          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo"
+          - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo/out"
         FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/vk-turn-proxy-ios/WireGuardBridge/build"
-        LIBRARY_SEARCH_PATHS:
-          - "$(inherited)"
           - "$(PROJECT_DIR)/Vendor/amneziawg-apple/Sources/WireGuardKitGo/out"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@loader_path/Frameworks"
         OTHER_LDFLAGS:
           - "-lresolv"
-          - "-lwg-go"
 
   DarkTunnelLiveActivity:
     type: app-extension
