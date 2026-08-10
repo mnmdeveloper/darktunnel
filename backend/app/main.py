@@ -9,9 +9,9 @@ from .admin_management import router as admin_management_router
 from .client_config import published_servers, recommended_server, server_payload
 from .config import get_settings
 from .db import get_session, init_db
-from .models import Activation, Announcement, Device, ServerHealth, ServerNode, ServerTransport
+from .models import Activation, Announcement, Device, ServerHealth, ServerNode, ServerTransport, User, UserStatus
 from .node_agent import NodeReport, apply_report, check_agent_token, generate_agent_token, put_agent_token
-from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult
+from .schemas import ActivationCreate, ActivationCreated, ActivationRedeem, ActivationResult, SubscriptionStatus
 from .security import decode_activation_token, hash_token
 from .server_crypto import decrypt_server_config
 from .server_profile import get_server_profile, profile_payload
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DarkTunnel Backend", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="DarkTunnel Backend", version="0.6.0", lifespan=lifespan)
 app.include_router(admin_management_router)
 
 
@@ -58,30 +58,62 @@ async def client_recommended_server(session: AsyncSession = Depends(get_session)
 
 @app.get("/v1/announcements")
 async def client_announcements(session: AsyncSession = Depends(get_session)) -> dict[str, object]:
-    rows = (await session.execute(select(Announcement).where(Announcement.active.is_(True)).order_by(Announcement.created_at.desc()).limit(10))).scalars().all()
-    return {"announcements": [{"id": str(row.id), "title": row.title, "body": row.body, "placement": row.placement, "created_at": row.created_at.isoformat()} for row in rows]}
+    rows = (await session.execute(select(Announcement).where(Announcement.active.is_(True)).order_by(Announcement.created_at.desc()).limit(20))).scalars().all()
+    return {"announcements": [{
+        "id": str(row.id),
+        "title": row.title,
+        "body": row.body,
+        "placement": row.placement,
+        "color_hex": row.color_hex,
+        "created_at": row.created_at.isoformat(),
+    } for row in rows]}
+
+
+def _validate_user(user: User | None, now: datetime) -> None:
+    if user is None or user.status == UserStatus.blocked:
+        raise HTTPException(status_code=403, detail="Subscription blocked")
+    if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
+        raise HTTPException(status_code=403, detail="Subscription expired")
+
+
+async def _authenticated_device(token: str, installation_id: str, session: AsyncSession) -> tuple[Device, User]:
+    if not token or not installation_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id, Device.auth_token_hash == hash_token(token)))
+    if device is None or device.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Device authentication unavailable")
+    user = await session.get(User, device.user_id)
+    _validate_user(user, datetime.now(UTC))
+    device.last_seen_at = datetime.now(UTC)
+    return device, user
+
+
+@app.get("/v1/subscription/status", response_model=SubscriptionStatus)
+async def subscription_status(
+    installation_id: str,
+    x_device_token: str = Header(alias="X-Device-Token"),
+    session: AsyncSession = Depends(get_session),
+) -> SubscriptionStatus:
+    device, user = await _authenticated_device(x_device_token, installation_id, session)
+    now = datetime.now(UTC)
+    await session.commit()
+    return SubscriptionStatus(
+        user_id=str(user.id),
+        device_id=str(device.id),
+        status=user.status.value,
+        active=user.lifetime or bool(user.subscription_expires_at and user.subscription_expires_at > now),
+        lifetime=user.lifetime,
+        subscription_expires_at=user.subscription_expires_at,
+        checked_at=now,
+    )
 
 
 async def _activated_client_config(session: AsyncSession, node: ServerNode) -> dict[str, object]:
-    """Load the node config and, for AWG, fall back to the transport-specific encrypted config.
-
-    Older provisioning stored AmneziaWG in ServerTransport.encrypted_config while
-    the activation endpoint only looked at ServerNode.encrypted_config. That made
-    the iOS client report "no AmneziaWG configuration" even though AWG was installed
-    and provisioned on the node.
-    """
     try:
         config = decrypt_server_config(node.encrypted_config)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Server configuration unavailable") from exc
-
-    transport = await session.scalar(
-        select(ServerTransport).where(
-            ServerTransport.server_id == node.id,
-            ServerTransport.transport_type == "amneziawg2",
-            ServerTransport.enabled.is_(True),
-        )
-    )
+    transport = await session.scalar(select(ServerTransport).where(ServerTransport.server_id == node.id, ServerTransport.transport_type == "amneziawg2", ServerTransport.enabled.is_(True)))
     if transport is not None and transport.encrypted_config:
         try:
             transport_config = decrypt_server_config(transport.encrypted_config)
@@ -91,7 +123,6 @@ async def _activated_client_config(session: AsyncSession, node: ServerNode) -> d
             awg_client_config = str(transport_config.get("awg_client_config", "")).strip()
             if awg_client_config:
                 config["awg_client_config"] = awg_client_config
-
     return config
 
 
@@ -102,99 +133,66 @@ async def activation_server_profile(token: str, installation_id: str, session: A
         activation_id = str(payload["activation_id"])
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid activation token") from exc
-
     activation = await session.scalar(select(Activation).where(Activation.id == activation_id))
     now = datetime.now(UTC)
     if activation is None or activation.token_hash != hash_token(token) or activation.revoked_at is not None or activation.link_expires_at < now:
         raise HTTPException(status_code=401, detail="Activation token unavailable")
-
-    device = await session.scalar(select(Device).where(Device.installation_id == installation_id))
-    if device is None:
-        raise HTTPException(status_code=401, detail="Device not activated")
-
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id, Device.revoked_at.is_(None)))
+    if device is None or (activation.user_id is not None and device.user_id != activation.user_id):
+        raise HTTPException(status_code=401, detail="Device not activated for this subscription")
+    user = await session.get(User, device.user_id)
+    _validate_user(user, now)
+    device.last_seen_at = now
+    await session.commit()
     settings = get_settings()
     node = await session.scalar(select(ServerNode).where(ServerNode.host == settings.wdtt_public_host, ServerNode.archived_at.is_(None)))
     if node is None:
         raise HTTPException(status_code=503, detail="Primary server unavailable")
     health = await session.scalar(select(ServerHealth).where(ServerHealth.server_id == node.id).order_by(ServerHealth.timestamp.desc()).limit(1))
     config = await _activated_client_config(session, node)
-
     return {"server": {
-        "id": str(node.id),
-        "name": node.name,
-        "country_code": node.country_code,
-        "country_name": node.country_name,
-        "city": node.city,
-        "latitude": node.latitude,
-        "longitude": node.longitude,
-        "host": node.host,
-        "port": node.port,
-        "mode": node.protocol_mode,
-        "wrap_a_password": str(config.get("wrap_a_password", "")),
-        "connections_balanced": node.balanced_connections,
-        "connections_maximum": node.max_connections,
-        "mtu": node.mtu,
-        "dns": node.dns,
-        "latency_ms": health.latency_ms if health else None,
-        "online": bool(health.online) if health else True,
+        "id": str(node.id), "name": node.name, "country_code": node.country_code, "country_name": node.country_name,
+        "city": node.city, "latitude": node.latitude, "longitude": node.longitude, "host": node.host, "port": node.port,
+        "mode": node.protocol_mode, "wrap_a_password": str(config.get("wrap_a_password", "")),
+        "connections_balanced": node.balanced_connections, "connections_maximum": node.max_connections, "mtu": node.mtu, "dns": node.dns,
+        "latency_ms": health.latency_ms if health else None, "online": bool(health.online) if health else True,
         "amnezia_config": str(config.get("awg_client_config", "")).strip() or None,
     }}
 
 
 @app.get("/v1/activation/server-profile/{server_id}")
-async def activation_server_profile_for_node(
-    server_id: str,
-    token: str,
-    installation_id: str,
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, object]:
-    """Return one published server's private AWG client profile to an activated device."""
+async def activation_server_profile_for_node(server_id: str, token: str, installation_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     try:
         payload = decode_activation_token(token)
         activation_id = str(payload["activation_id"])
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid activation token") from exc
-
     activation = await session.scalar(select(Activation).where(Activation.id == activation_id))
     now = datetime.now(UTC)
     if activation is None or activation.token_hash != hash_token(token) or activation.revoked_at is not None or activation.link_expires_at < now:
         raise HTTPException(status_code=401, detail="Activation token unavailable")
-
-    device = await session.scalar(select(Device).where(Device.installation_id == installation_id))
-    if device is None or device.revoked_at is not None:
-        raise HTTPException(status_code=401, detail="Device not activated")
-
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id, Device.revoked_at.is_(None)))
+    if device is None or (activation.user_id is not None and device.user_id != activation.user_id):
+        raise HTTPException(status_code=401, detail="Device not activated for this subscription")
+    user = await session.get(User, device.user_id)
+    _validate_user(user, now)
     try:
         node = await session.scalar(select(ServerNode).where(ServerNode.id == server_id, ServerNode.published.is_(True), ServerNode.maintenance.is_(False), ServerNode.archived_at.is_(None)))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid server id") from exc
     if node is None:
         raise HTTPException(status_code=404, detail="Server not found")
-
     config = await _activated_client_config(session, node)
     awg_config = str(config.get("awg_client_config", "")).strip()
     if not awg_config:
         raise HTTPException(status_code=404, detail="AmneziaWG is not provisioned for this server")
-
     health = await session.scalar(select(ServerHealth).where(ServerHealth.server_id == node.id).order_by(ServerHealth.timestamp.desc()).limit(1))
     return {"server": {
-        "id": str(node.id),
-        "name": node.name,
-        "country_code": node.country_code,
-        "country_name": node.country_name,
-        "city": node.city,
-        "latitude": node.latitude,
-        "longitude": node.longitude,
-        "host": node.host,
-        "port": node.port,
-        "mode": node.protocol_mode,
-        "wrap_a_password": str(config.get("wrap_a_password", "")),
-        "connections_balanced": node.balanced_connections,
-        "connections_maximum": node.max_connections,
-        "mtu": node.mtu,
-        "dns": node.dns,
-        "latency_ms": health.latency_ms if health else None,
-        "online": bool(health.online) if health else True,
+        "id": str(node.id), "name": node.name, "country_code": node.country_code, "country_name": node.country_name,
+        "city": node.city, "latitude": node.latitude, "longitude": node.longitude, "host": node.host, "port": node.port,
+        "mode": node.protocol_mode, "wrap_a_password": str(config.get("wrap_a_password", "")),
+        "connections_balanced": node.balanced_connections, "connections_maximum": node.max_connections, "mtu": node.mtu, "dns": node.dns,
+        "latency_ms": health.latency_ms if health else None, "online": bool(health.online) if health else True,
         "amnezia_config": awg_config,
     }}
 
