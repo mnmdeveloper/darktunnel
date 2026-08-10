@@ -1,6 +1,7 @@
 #ifndef DarkTunnel_BridgeHeader_h
 #define DarkTunnel_BridgeHeader_h
 
+#include <stdint.h>
 #include "wireguard_turn.h"
 #include "AmneziaWGBridge.h"
 
