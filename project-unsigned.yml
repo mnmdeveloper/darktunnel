@@ -90,9 +90,11 @@ targets:
       - path: LiveActivity
       - path: Shared
     info:
-      CFBundleDisplayName: DarkTunnel Live Activity
-      NSExtension:
-        NSExtensionPointIdentifier: com.apple.widgetkit-extension
+      path: LiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: DarkTunnel Live Activity
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.lavender3512.currant6944.LiveActivity
