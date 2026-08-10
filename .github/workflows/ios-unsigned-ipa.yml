@@ -157,7 +157,6 @@ jobs:
             -Wl,-force_load,"$ARCHIVE" \
             -Wl,-install_name,@rpath/AmneziaWG.framework/AmneziaWG \
             -Wl,-headerpad_max_install_names \
-            "$ARCHIVE" \
             -framework Foundation \
             -framework Security \
             -framework NetworkExtension \
@@ -229,9 +228,9 @@ jobs:
           IPA="$RUNNER_TEMP/DarkTunnel-unsigned.ipa"
           rm -rf "$RUNNER_TEMP/package"
           mkdir -p "$RUNNER_TEMP/package/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/package/Payload/DarkTunnel.app"
-          find "$RUNNER_TEMP/package/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
-          find "$RUNNER_TEMP/package/Payload" -name embedded.mobileprovision -type f -delete
+          cp -R "$APP" "$RUNNER_TEMP/package/DarkTunnel.app"
+          find "$RUNNER_TEMP/package" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$RUNNER_TEMP/package" -name embedded.mobileprovision -type f -delete
           cd "$RUNNER_TEMP/package"
           /usr/bin/zip -qry -X "$IPA" Payload
           unzip -tq "$IPA"
