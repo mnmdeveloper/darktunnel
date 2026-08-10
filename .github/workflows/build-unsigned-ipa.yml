@@ -30,6 +30,54 @@ jobs:
           ref: master
           path: Vendor/amneziawg-apple
 
+      - name: Namespace AmneziaWG bridge symbols
+        working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          symbols = (
+              "wgSetLogger",
+              "wgTurnOn",
+              "wgTurnOff",
+              "wgSetConfig",
+              "wgBumpSockets",
+              "wgDisableSomeRoamingForBrokenMobileSemantics",
+              "wgVersion",
+          )
+          renamed = {name: "awg" + name[2:] for name in symbols}
+          changed_files = 0
+
+          for path in Path('.').rglob('*.go'):
+              text = path.read_text()
+              lines = text.splitlines(keepends=True)
+              changed = False
+              export_name = None
+              for i, line in enumerate(lines):
+                  stripped = line.strip()
+                  if stripped.startswith('//export '):
+                      name = stripped[len('//export '):].split()[0]
+                      if name in renamed:
+                          lines[i] = line.replace('//export ' + name, '//export ' + renamed[name], 1)
+                          export_name = (name, renamed[name])
+                          changed = True
+                          continue
+                  if export_name and line.lstrip().startswith('func ' + export_name[0] + '('):
+                      lines[i] = line.replace('func ' + export_name[0] + '(', 'func ' + export_name[1] + '(', 1)
+                      changed = True
+                      export_name = None
+                  elif stripped and not stripped.startswith('//'):
+                      export_name = None
+              if changed:
+                  path.write_text(''.join(lines))
+                  changed_files += 1
+
+          print(f'Namespaced AmneziaWG exports in {changed_files} Go file(s)')
+          if changed_files == 0:
+              raise SystemExit('No AmneziaWG bridge exports were found to namespace')
+          PY
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -89,6 +137,12 @@ jobs:
           make build
 
           test -f out/libwg-go.a
+          echo 'AmneziaWG exported symbols:'
+          nm -gU out/libwg-go.a | grep -E ' _?awg(SetLogger|TurnOn|TurnOff|SetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'
+          if nm -gU out/libwg-go.a | grep -E ' _?wg(SetLogger|TurnOn|TurnOff|SetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'; then
+            echo 'ERROR: un-namespaced AmneziaWG bridge symbols remain'
+            exit 1
+          fi
 
       - name: Generate full unsigned project
         run: xcodegen generate --spec project-unsigned.yml
