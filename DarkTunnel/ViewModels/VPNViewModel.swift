@@ -12,7 +12,13 @@ final class VPNViewModel: ObservableObject {
     @Published var disconnectOnSleep = UserDefaults.standard.bool(forKey: "disconnectOnSleep") { didSet { UserDefaults.standard.set(disconnectOnSleep, forKey: "disconnectOnSleep") } }
     @Published var reconnectAfterWake = UserDefaults.standard.object(forKey: "reconnectAfterWake") as? Bool ?? true { didSet { UserDefaults.standard.set(reconnectAfterWake, forKey: "reconnectAfterWake") } }
     @Published var routeAPNsThroughVPN = UserDefaults.standard.bool(forKey: "routeAPNsThroughVPN") { didSet { UserDefaults.standard.set(routeAPNsThroughVPN, forKey: "routeAPNsThroughVPN") } }
-    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true { didSet { UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled"); if !liveActivitiesEnabled { LiveActivityController.shared.end() } } }
+    @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
+            if liveActivitiesEnabled { syncLiveActivity() }
+            else { LiveActivityController.shared.end() }
+        }
+    }
     @Published var connectionError: String?
     @Published var vkCallLink = UserDefaults.standard.string(forKey: "vkCallLink") ?? ""
     @Published private(set) var servers: [VPNServer] = []
@@ -23,12 +29,15 @@ final class VPNViewModel: ObservableObject {
 
     private var remoteServers: [UUID: RemoteVPNServer] = [:]
     private var wasConnectedBeforeSleep = false
+    private var latencyMonitorTask: Task<Void, Never>?
 
     init() {
         if let raw = UserDefaults.standard.string(forKey: "preferredTransport"), let value = TransportKind(rawValue: raw) { preferredTransport = value }
         restoreLocalServers()
         Task { await restoreSystemState() }
     }
+
+    deinit { latencyMonitorTask?.cancel() }
 
     var networkName: String { connectivity.networkKind.rawValue }
     var selectedRemoteServer: RemoteVPNServer? { remoteServers[selectedServer.id] }
@@ -42,7 +51,17 @@ final class VPNViewModel: ObservableObject {
         case .reconnecting: return "Переподключение через \(activeTransport.rawValue)"
         }
     }
-    var pingText: String { selectedServer.latencyMilliseconds > 0 ? "\(selectedServer.latencyMilliseconds) мс" : "—" }
+
+    var pingText: String {
+        let latency = effectiveSelectedLatency
+        return latency > 0 ? "\(latency) мс" : "—"
+    }
+
+    var effectiveSelectedLatency: Int {
+        if selectedServer.latencyMilliseconds > 0 { return selectedServer.latencyMilliseconds }
+        return remoteServers[selectedServer.id]?.latencyMS ?? 0
+    }
+
     private var normalizedVKLink: String { vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var hasValidVKLink: Bool {
@@ -105,14 +124,42 @@ final class VPNViewModel: ObservableObject {
                 try await VPNController.shared.connect(transport: chosenTransport, vkCallLink: normalizedVKLink, profile: profile)
                 guard state == .connecting else { return }
                 withAnimation(.snappy(duration: 0.35)) { state = .connected }
-                await measureTunnelLatency()
-                if liveActivitiesEnabled { LiveActivityController.shared.start(server: selectedServer.city, latency: selectedServer.latencyMilliseconds, transport: chosenTransport.rawValue) }
+                await measureTunnelLatency(updateLiveActivity: true)
+                startLatencyMonitor()
+                if liveActivitiesEnabled { syncLiveActivity() }
                 Task { connectivity = await ConnectivityDiagnostics.shared.run(); await refreshServers() }
-            } catch { connectionError = "Не удалось подключиться: \(error.localizedDescription)"; state = .disconnected; AppLog.shared.error("VPN", error.localizedDescription) }
+            } catch { connectionError = "Не удалось подключиться: \(error.localizedDescription)"; state = .disconnected; stopLatencyMonitor(); LiveActivityController.shared.end(); AppLog.shared.error("VPN", error.localizedDescription) }
         }
     }
 
-    func disconnect() { VPNController.shared.disconnect(); withAnimation(.snappy(duration: 0.3)) { state = .disconnected }; LiveActivityController.shared.end() }
+    func disconnect() {
+        stopLatencyMonitor()
+        VPNController.shared.disconnect()
+        withAnimation(.snappy(duration: 0.3)) { state = .disconnected }
+        LiveActivityController.shared.end()
+    }
+
+    func syncLiveActivity() {
+        guard liveActivitiesEnabled, state == .connected else { return }
+        LiveActivityController.shared.start(
+            server: selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city,
+            latency: effectiveSelectedLatency,
+            transport: activeTransport.rawValue
+        )
+    }
+
+    func repairLiveActivity() {
+        if state == .connected && liveActivitiesEnabled {
+            LiveActivityController.shared.end()
+            LiveActivityController.shared.start(
+                server: selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city,
+                latency: effectiveSelectedLatency,
+                transport: activeTransport.rawValue
+            )
+        } else {
+            LiveActivityController.shared.end()
+        }
+    }
 
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
@@ -121,6 +168,7 @@ final class VPNViewModel: ObservableObject {
             if disconnectOnSleep && wasConnectedBeforeSleep { disconnect() }
         case .active:
             if wasConnectedBeforeSleep && reconnectAfterWake && state == .disconnected { wasConnectedBeforeSleep = false; connect() }
+            if state == .connected { startLatencyMonitor(); syncLiveActivity() }
         default: break
         }
     }
@@ -132,8 +180,13 @@ final class VPNViewModel: ObservableObject {
             if let transport = restored.transport { resolvedTransport = transport }
             state = restored.status == .connected ? .connected : .connecting
             await refreshServers()
-            await measureTunnelLatency()
-        default: break
+            if state == .connected {
+                await measureTunnelLatency(updateLiveActivity: true)
+                startLatencyMonitor()
+                syncLiveActivity()
+            }
+        default:
+            LiveActivityController.shared.end()
         }
     }
 
@@ -159,23 +212,44 @@ final class VPNViewModel: ObservableObject {
         return false
     }
 
-    private func measureTunnelLatency() async {
+    private func startLatencyMonitor() {
+        stopLatencyMonitor()
+        guard state == .connected else { return }
+        latencyMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(7))
+                guard !Task.isCancelled else { return }
+                guard let self, self.state == .connected else { return }
+                await self.measureTunnelLatency(updateLiveActivity: true)
+            }
+        }
+    }
+
+    private func stopLatencyMonitor() {
+        latencyMonitorTask?.cancel()
+        latencyMonitorTask = nil
+    }
+
+    private func measureTunnelLatency(updateLiveActivity: Bool = false) async {
         guard state == .connected, let url = URL(string: "https://api.31-77-148-80.sslip.io/health") else { return }
         isMeasuringLatency = true
         defer { isMeasuringLatency = false }
         var samples: [Int] = []
         for _ in 0..<3 {
             var request = URLRequest(url: url); request.timeoutInterval = 5; request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             let started = ContinuousClock.now
             do {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<500).contains(http.statusCode) else { continue }
                 let elapsed = started.duration(to: .now)
-                samples.append(max(1, Int(Double(elapsed.components.attoseconds) / 1_000_000_000_000_000 + Double(elapsed.components.seconds) * 1000)))
+                let milliseconds = Int(Double(elapsed.components.attoseconds) / 1_000_000_000_000_000 + Double(elapsed.components.seconds) * 1000)
+                samples.append(max(1, milliseconds))
             } catch { }
         }
         guard !samples.isEmpty else { return }
         samples.sort(); updateSelectedLatency(samples[samples.count / 2])
+        if updateLiveActivity { syncLiveActivity() }
     }
 
     private func updateSelectedLatency(_ latency: Int) {
@@ -191,18 +265,23 @@ final class VPNViewModel: ObservableObject {
         let previousLatency = selectedServer.latencyMilliseconds
         remoteServers = Dictionary(uniqueKeysWithValues: remote.map { ($0.displayModel.id, $0) })
         servers = remote.map(\.displayModel)
-        if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) { selectedServer = existing; if previousLatency > 0 { updateSelectedLatency(previousLatency) } } else { selectBestLocalServer() }
+        if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) {
+            selectedServer = existing
+            if previousLatency > 0 { updateSelectedLatency(previousLatency) }
+        } else {
+            selectBestLocalServer()
+        }
     }
 
     private func selectBestLocalServer() { guard !servers.isEmpty else { return }; selectedServer = servers.min { latencyOrder($0, $1) } ?? servers[0] }
     private func selectBestServer(for transport: TransportKind) {
         guard !servers.isEmpty else { return }
         if transport == .amneziaWG {
-            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.isEmpty == false }
+            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
             if let best = candidates.min(by: latencyOrder) { selectedServer = best; return }
         }
         if let best = servers.min(by: latencyOrder) { selectedServer = best }
     }
     private func latencyOrder(_ lhs: VPNServer, _ rhs: VPNServer) -> Bool { (lhs.latencyMilliseconds > 0 ? lhs.latencyMilliseconds : Int.max) < (rhs.latencyMilliseconds > 0 ? rhs.latencyMilliseconds : Int.max) }
-    private func reconnectIfNeeded() { guard state == .connected else { return }; state = .reconnecting; VPNController.shared.disconnect(); Task { try? await Task.sleep(for: .milliseconds(450)); connect() } }
+    private func reconnectIfNeeded() { guard state == .connected else { return }; state = .reconnecting; stopLatencyMonitor(); VPNController.shared.disconnect(); Task { try? await Task.sleep(for: .milliseconds(450)); connect() } }
 }
