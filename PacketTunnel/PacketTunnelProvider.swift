@@ -111,22 +111,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func findTunFileDescriptor() -> Int32? {
-        var ctlInfo = ctl_info()
-        withUnsafeMutablePointer(to: &ctlInfo.ctl_name) {
-            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) { pointer in _ = strcpy(pointer, "com.apple.net.utun_control") }
-        }
-        for fd: Int32 in 0...1024 {
-            var addr = sockaddr_ctl()
-            var result: Int32 = -1
-            var length = socklen_t(MemoryLayout.size(ofValue: addr))
-            withUnsafeMutablePointer(to: &addr) { pointer in
-                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in result = getpeername(fd, sockaddrPointer, &length) }
-            }
-            if result != 0 || addr.sc_family != AF_SYSTEM { continue }
-            if ctlInfo.ctl_id == 0 { result = ioctl(fd, CTLIOCGINFO, &ctlInfo); if result != 0 { continue } }
-            if addr.sc_id == ctlInfo.ctl_id { return fd }
-        }
-        return nil
+        let fd = dt_find_utun_fd()
+        return fd >= 0 ? fd : nil
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
@@ -234,7 +220,7 @@ private enum TunnelError: LocalizedError {
         case .invalidProvision: return "Сервер передал некорректные настройки WireGuard"
         case .noTunDevice: return "Не удалось получить системный TUN-интерфейс"
         case .missingAmneziaConfiguration: return "Отсутствует конфигурация AmneziaWG"
-        case .amneziaBackendFailed(let code): return "Ошибка движка AmneziaWG: \(code)"
+        case .amneziaBackendFailed(let code): return "Ошибка AmneziaWG: \(code)"
         case .invalidAmneziaConfiguration(let message): return message
         }
     }
