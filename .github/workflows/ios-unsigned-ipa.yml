@@ -60,7 +60,6 @@ jobs:
       - name: Verify Xcode and SDK
         run: |
           set -euo pipefail
-          echo "Developer directory: $DEVELOPER_DIR"
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
           go version
@@ -142,22 +141,33 @@ jobs:
         run: |
           set -euo pipefail
           SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
-          BUILD_TMP="$PWD/.build-tmp"
-          GOROOT_PATCHED="$BUILD_TMP/wireguard-go-bridge/goroot"
-          test -d "$GOROOT_PATCHED"
-          rm -rf out/AmneziaWG.framework
-          mkdir -p out/AmneziaWG.framework
-          GOOS=ios \
-          GOARCH=arm64 \
-          CGO_ENABLED=1 \
-          GOROOT="$GOROOT_PATCHED" \
-          CGO_CFLAGS="-isysroot $SDKROOT -arch arm64" \
-          CGO_LDFLAGS="-isysroot $SDKROOT -arch arm64" \
-          go build -buildmode=c-shared -ldflags=-w -trimpath -o out/AmneziaWG.framework/AmneziaWG
-          test -s out/AmneziaWG.framework/AmneziaWG
-          install_name_tool -id '@rpath/AmneziaWG.framework/AmneziaWG' out/AmneziaWG.framework/AmneziaWG
-          cp out/AmneziaWG.h out/AmneziaWG.framework/AmneziaWG.h
-          cat > out/AmneziaWG.framework/Info.plist <<'PLIST'
+          ARCHIVE="$PWD/out/libwg-go.a"
+          FRAMEWORK="$PWD/out/AmneziaWG.framework"
+          rm -rf "$FRAMEWORK"
+          mkdir -p "$FRAMEWORK/Headers"
+
+          # Go's iOS port supports c-archive, but not c-shared. Build the Go
+          # runtime as a c-archive first, then turn that archive into the
+          # dynamic library inside a real iOS framework with Apple's linker.
+          clang -dynamiclib \
+            -arch arm64 \
+            -isysroot "$SDKROOT" \
+            -miphoneos-version-min=17.0 \
+            -Wl,-no_adhoc_codesign \
+            -Wl,-dead_strip \
+            -Wl,-install_name,@rpath/AmneziaWG.framework/AmneziaWG \
+            -Wl,-headerpad_max_install_names \
+            "$ARCHIVE" \
+            -framework Foundation \
+            -framework Security \
+            -framework NetworkExtension \
+            -lresolv \
+            -o "$FRAMEWORK/AmneziaWG"
+
+          test -s "$FRAMEWORK/AmneziaWG"
+          cp out/libwg-go.h "$FRAMEWORK/Headers/AmneziaWG.h"
+          cp out/libwg-go.h "$FRAMEWORK/AmneziaWG.h"
+          cat > "$FRAMEWORK/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
@@ -169,8 +179,8 @@ jobs:
           <key>CFBundleShortVersionString</key><string>1.0</string>
           </dict></plist>
           PLIST
-          otool -L out/AmneziaWG.framework/AmneziaWG
-          nm -gU out/AmneziaWG.framework/AmneziaWG | grep -E ' _?awg(SetLogger|TurnOn|TurnOff|SetConfig|GetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'
+          otool -L "$FRAMEWORK/AmneziaWG"
+          nm -gU "$FRAMEWORK/AmneziaWG" | grep -E ' _?awg(SetLogger|TurnOn|TurnOff|SetConfig|GetConfig|BumpSockets|DisableSomeRoamingForBrokenMobileSemantics|Version)$'
 
       - name: Generate Xcode project
         run: |
