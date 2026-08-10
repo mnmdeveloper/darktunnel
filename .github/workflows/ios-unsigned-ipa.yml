@@ -146,17 +146,15 @@ jobs:
           rm -rf "$FRAMEWORK"
           mkdir -p "$FRAMEWORK/Headers"
 
-          # iOS Go supports c-archive, not c-shared. A plain archive is not
-          # pulled into a dylib unless it satisfies an undefined symbol, so
-          # force-load the complete Go archive into the framework binary.
           clang -dynamiclib \
             -arch arm64 \
             -isysroot "$SDKROOT" \
             -miphoneos-version-min=17.0 \
             -Wl,-no_adhoc_codesign \
-            -Wl,-force_load,"$ARCHIVE" \
+            -Wl,-dead_strip \
             -Wl,-install_name,@rpath/AmneziaWG.framework/AmneziaWG \
             -Wl,-headerpad_max_install_names \
+            -Wl,-force_load,"$ARCHIVE" \
             -framework Foundation \
             -framework Security \
             -framework NetworkExtension \
@@ -228,14 +226,16 @@ jobs:
           IPA="$RUNNER_TEMP/DarkTunnel-unsigned.ipa"
           rm -rf "$RUNNER_TEMP/package"
           mkdir -p "$RUNNER_TEMP/package/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/package/DarkTunnel.app"
-          find "$RUNNER_TEMP/package" -name _CodeSignature -type d -prune -exec rm -rf {} +
-          find "$RUNNER_TEMP/package" -name embedded.mobileprovision -type f -delete
+          cp -R "$APP" "$RUNNER_TEMP/package/Payload/DarkTunnel.app"
+          find "$RUNNER_TEMP/package/Payload" -name _CodeSignature -type d -prune -exec rm -rf {} +
+          find "$RUNNER_TEMP/package/Payload" -name embedded.mobileprovision -type f -delete
           cd "$RUNNER_TEMP/package"
           /usr/bin/zip -qry -X "$IPA" Payload
           unzip -tq "$IPA"
           test -s "$IPA"
-          unzip -l "$IPA" | grep -E 'DarkTunnel.app/(PlugIns/PacketTunnel.appex/|PlugIns/DarkTunnelLiveActivity.appex/)' | head -200
+          unzip -Z1 "$IPA" | grep -q '^Payload/DarkTunnel.app/PlugIns/PacketTunnel.appex/'
+          unzip -Z1 "$IPA" | grep -q '^Payload/DarkTunnel.app/PlugIns/DarkTunnelLiveActivity.appex/'
+          unzip -Z1 "$IPA" | grep -q '^Payload/DarkTunnel.app/Info.plist$'
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
