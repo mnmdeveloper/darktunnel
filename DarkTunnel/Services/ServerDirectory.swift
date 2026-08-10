@@ -124,6 +124,17 @@ actor ServerDirectoryClient {
         return try await fetchActivatedServer(path: "/v1/activation/server-profile/\(serverID)")
     }
 
+    func fetchActivatedServers(_ serverIDs: [String]) async -> [RemoteVPNServer] {
+        await withTaskGroup(of: RemoteVPNServer?.self, returning: [RemoteVPNServer].self) { group in
+            for id in serverIDs {
+                group.addTask { try? await self.fetchActivatedServer(id) }
+            }
+            var result: [RemoteVPNServer] = []
+            for await server in group { if let server { result.append(server) } }
+            return result
+        }
+    }
+
     private func fetchActivatedServer(path: String) async throws -> RemoteVPNServer {
         guard let token = KeychainStore.readString(account: "activation-token"), !token.isEmpty else { throw ServerDirectoryError.invalidResponse }
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
