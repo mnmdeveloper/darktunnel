@@ -120,7 +120,7 @@ async def misc(callback: CallbackQuery) -> None:
         await callback.answer("Доступ запрещён", show_alert=True)
         return
     rows = [
-        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcements")],
+        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcement:list")],
         [button("📲 Push", "push"), button("👮 Администраторы", "admins")],
         [button("🧾 Журнал", "audit:0"), button("💳 Продажи", "sales")],
         [button("⬅️ Главное меню", "home")],
