@@ -65,24 +65,40 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     if existing_device is not None:
         user = await session.get(User, existing_device.user_id)
         if user is None or user.status == UserStatus.blocked:
-            raise ValueError("User unavailable")
+            raise ValueError("Subscription blocked")
         if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
             raise ValueError("Subscription expired")
-        return _result(user, existing_device)
+        existing_device.public_key = data.public_key
+        existing_device.app_version = data.app_version
+        existing_device.ios_version = data.ios_version
+        existing_device.last_seen_at = now
+        refresh_token = _issue_device_token(existing_device)
+        await session.commit()
+        return _result(user, existing_device, refresh_token)
 
-    if activation.uses >= activation.max_uses:
-        raise ValueError("Activation usage limit reached")
+    # One activation creates ONE subscription/user. Additional allowed devices
+    # are attached to that same user instead of creating another full subscription.
+    user: User | None = None
+    if activation.user_id is not None:
+        user = await session.get(User, activation.user_id)
+        if user is None:
+            raise ValueError("Activation owner unavailable")
+        if user.status == UserStatus.blocked:
+            raise ValueError("Subscription blocked")
+        if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
+            raise ValueError("Subscription expired")
+    else:
+        user = User(
+            telegram_id=activation.telegram_id,
+            note=activation.note,
+            activated_at=now,
+            subscription_expires_at=now + timedelta(days=activation.duration_days),
+        )
+        session.add(user)
+        await session.flush()
+        activation.user_id = user.id
 
-    user = User(
-        telegram_id=activation.telegram_id,
-        note=activation.note,
-        activated_at=now,
-        subscription_expires_at=now + timedelta(days=activation.duration_days),
-    )
-    session.add(user)
-    await session.flush()
-
-    device_count = await session.scalar(select(func.count(Device.id)).where(Device.user_id == user.id))
+    device_count = await session.scalar(select(func.count(Device.id)).where(Device.user_id == user.id, Device.revoked_at.is_(None)))
     if int(device_count or 0) >= activation.max_devices:
         raise ValueError("Device limit reached")
 
@@ -92,24 +108,32 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         public_key=data.public_key,
         app_version=data.app_version,
         ios_version=data.ios_version,
+        last_seen_at=now,
     )
     session.add(device)
-    activation.uses += 1
+    activation.uses = max(activation.uses, 0) + 1
+    refresh_token = _issue_device_token(device)
     await session.commit()
     await session.refresh(user)
     await session.refresh(device)
-    return _result(user, device)
+    return _result(user, device, refresh_token)
 
 
-def _result(user: User, device: Device) -> ActivationResult:
+def _issue_device_token(device: Device) -> str:
+    token = generate_refresh_token()
+    device.auth_token_hash = hash_token(token)
+    return token
+
+
+def _result(user: User, device: Device, refresh_token: str) -> ActivationResult:
     settings = get_settings()
-    if user.subscription_expires_at is None:
-        raise ValueError("Subscription missing")
     return ActivationResult(
         user_id=str(user.id),
         device_id=str(device.id),
         subscription_expires_at=user.subscription_expires_at,
-        refresh_token=generate_refresh_token(),
+        lifetime=user.lifetime,
+        user_status=user.status.value,
+        refresh_token=refresh_token,
         server=ServerProfile(
             host=settings.wdtt_public_host,
             port=settings.wdtt_public_port,
