@@ -13,6 +13,7 @@ from .bot_features import router as features_router
 from .bot_management import router as management_router
 from .bot_node_status import router as node_status_router
 from .bot_subscription_admin import router as subscription_admin_router
+from .bot_subscription_user_admin import router as subscription_user_admin_router
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
@@ -164,6 +165,9 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
+    # This router must precede the legacy user-management router because both
+    # use mg:user:view:* callbacks. It provides the complete subscription UI.
+    dispatcher.include_router(subscription_user_admin_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(subscription_admin_router)
     dispatcher.include_router(features_router)
