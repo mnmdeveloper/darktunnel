@@ -62,8 +62,6 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     if activation.revoked_at is not None or activation.link_expires_at < now:
         raise ValueError("Activation link unavailable")
 
-    # Lock the installation row if it already exists. Never let a device that
-    # belongs to another subscription be rebound by presenting a new link.
     existing_device = await session.scalar(
         select(Device)
         .where(Device.installation_id == data.installation_id)
@@ -72,29 +70,46 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
 
     if existing_device is not None:
         user = await session.get(User, existing_device.user_id)
-        if user is None or user.status == UserStatus.blocked:
-            raise ValueError("Subscription blocked")
-        if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
-            raise ValueError("Subscription expired")
+        if user is None:
+            raise ValueError("Subscription owner unavailable")
 
-        if activation.user_id is not None and activation.user_id != user.id:
+        # A fresh activation link issued by the administrator is an explicit
+        # authorization to restore/renew this installation. This is deliberately
+        # different from replaying an already-bound activation link.
+        fresh_activation = activation.user_id is None
+        if not fresh_activation and activation.user_id != user.id:
             raise ValueError("Device already belongs to another subscription")
 
-        if activation.user_id is None:
-            # A fresh activation redeemed on an already-known device is a
-            # legitimate renewal. Bind the activation to the existing user and
-            # extend that subscription instead of creating a second User row.
-            activation.user_id = user.id
+        if not fresh_activation:
+            if user.status == UserStatus.blocked:
+                raise ValueError("Subscription blocked")
+            if not user.lifetime and (user.subscription_expires_at is None or user.subscription_expires_at <= now):
+                raise ValueError("Subscription expired")
+
+            existing_device.public_key = data.public_key
+            existing_device.app_version = data.app_version
+            existing_device.ios_version = data.ios_version
+            existing_device.last_seen_at = now
+            refresh_token = _issue_device_token(existing_device)
+            await session.commit()
+            return _result(user, existing_device, refresh_token)
+
+        # The old subscription may be expired or blocked. Because this is a
+        # brand-new, admin-created activation, restore the same subscription
+        # owner instead of creating a duplicate User row for the same device.
+        user.status = UserStatus.active
+        if not user.lifetime:
             base = user.subscription_expires_at if user.subscription_expires_at and user.subscription_expires_at > now else now
-            if not user.lifetime:
-                user.subscription_expires_at = base + timedelta(days=activation.duration_days)
-            activation.uses = max(activation.uses, 0) + 1
-            session.add(AuditLog(admin_id=activation.created_by, action="activation.redeem.renew", entity_type="activation", entity_id=str(activation.id)))
-        # If activation.user_id already points to this user, re-opening the same
-        # link on the same device is idempotent: no extra days and no extra use.
+            user.subscription_expires_at = base + timedelta(days=activation.duration_days)
+        user.activated_at = user.activated_at or now
+        activation.user_id = user.id
+        activation.uses = max(activation.uses, 0) + 1
+        session.add(AuditLog(admin_id=activation.created_by, action="activation.redeem.restore", entity_type="activation", entity_id=str(activation.id)))
+
         existing_device.public_key = data.public_key
         existing_device.app_version = data.app_version
         existing_device.ios_version = data.ios_version
+        existing_device.revoked_at = None
         existing_device.last_seen_at = now
         refresh_token = _issue_device_token(existing_device)
         await session.commit()
@@ -122,8 +137,6 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         await session.flush()
         activation.user_id = user.id
 
-    # max_uses limits NEW devices consuming the activation. A repeat on an
-    # already-bound device is handled idempotently above.
     if activation.uses >= activation.max_uses:
         raise ValueError("Activation use limit reached")
 
