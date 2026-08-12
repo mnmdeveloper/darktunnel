@@ -28,8 +28,8 @@ final class SubscriptionGuard: ObservableObject {
 
     func checkNow() async {
         guard ActivationStore.shared.isActivated,
-              let activationToken = KeychainStore.readString(account: "activation-token"),
-              !activationToken.isEmpty else {
+              let deviceToken = KeychainStore.readString(account: "refresh-token"),
+              !deviceToken.isEmpty else {
             isAuthorized = false
             return
         }
@@ -43,7 +43,7 @@ final class SubscriptionGuard: ObservableObject {
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(activationToken, forHTTPHeaderField: "X-Activation-Token")
+        request.setValue(deviceToken, forHTTPHeaderField: "X-Device-Token")
 
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
@@ -56,8 +56,6 @@ final class SubscriptionGuard: ObservableObject {
                 LiveActivityController.shared.end()
             }
         } catch {
-            // A temporary backend/network outage must not destroy a valid local
-            // session. Only an authoritative 401/403 revokes access in-app.
             AppLog.shared.warning("Subscription", "Проверка подписки недоступна: \(error.localizedDescription)")
         }
     }
