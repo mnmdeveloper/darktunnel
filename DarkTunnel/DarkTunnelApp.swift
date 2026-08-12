@@ -6,6 +6,7 @@ struct DarkTunnelApp: App {
     @StateObject private var viewModel = VPNViewModel()
     @StateObject private var activation = ActivationStore.shared
     @StateObject private var subscription = SubscriptionGuard.shared
+    @StateObject private var subscriptionManagement = SubscriptionManagementStore.shared
 
     var body: some Scene {
         WindowGroup {
@@ -25,9 +26,14 @@ struct DarkTunnelApp: App {
                 if url.scheme?.lowercased() == "darktunnel", url.host?.lowercased() == "activate" {
                     activation.handle(url: url)
                     Task { await subscription.checkNow() }
+                } else if url.scheme?.lowercased() == "darktunnel", url.host?.lowercased() == "subscription" {
+                    subscriptionManagement.open(url: url)
                 } else {
                     viewModel.handleDeepLink(url)
                 }
+            }
+            .sheet(isPresented: $subscriptionManagement.isPresented) {
+                SubscriptionManagementView()
             }
         }
     }

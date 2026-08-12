@@ -16,6 +16,7 @@ from .security import decode_activation_token, hash_token
 from .server_crypto import decrypt_server_config
 from .server_profile import get_server_profile, profile_payload
 from .services import create_activation, redeem_activation
+from .subscription_routes import router as subscription_router
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DarkTunnel Backend", version="0.6.0", lifespan=lifespan)
 app.include_router(admin_management_router)
+app.include_router(subscription_router)
 
 
 @app.get("/health")
