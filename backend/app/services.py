@@ -74,8 +74,9 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
             raise ValueError("Subscription owner unavailable")
 
         # A fresh activation link issued by the administrator is an explicit
-        # authorization to restore/renew this installation. This is deliberately
-        # different from replaying an already-bound activation link.
+        # authorization to restore this installation. It defines a new exact
+        # subscription term; it must not inherit an old test/expired term and
+        # accidentally turn a 3-day activation into a multi-year subscription.
         fresh_activation = activation.user_id is None
         if not fresh_activation and activation.user_id != user.id:
             raise ValueError("Device already belongs to another subscription")
@@ -94,13 +95,13 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
             await session.commit()
             return _result(user, existing_device, refresh_token)
 
-        # The old subscription may be expired or blocked. Because this is a
-        # brand-new, admin-created activation, restore the same subscription
-        # owner instead of creating a duplicate User row for the same device.
+        # A brand-new admin activation replaces the old subscription term with
+        # exactly the number of days specified by that activation. Renewals of
+        # an already-bound activation are handled by the normal subscription
+        # lifecycle and are never allowed to revive a blocked/expired user.
         user.status = UserStatus.active
-        if not user.lifetime:
-            base = user.subscription_expires_at if user.subscription_expires_at and user.subscription_expires_at > now else now
-            user.subscription_expires_at = base + timedelta(days=activation.duration_days)
+        user.lifetime = False
+        user.subscription_expires_at = now + timedelta(days=activation.duration_days)
         user.activated_at = user.activated_at or now
         activation.user_id = user.id
         activation.uses = max(activation.uses, 0) + 1
