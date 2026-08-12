@@ -12,6 +12,7 @@ from .bot_announcements import router as announcements_router
 from .bot_features import router as features_router
 from .bot_management import router as management_router
 from .bot_node_status import router as node_status_router
+from .bot_subscription_admin import router as subscription_admin_router
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import ServerHealth, ServerNode
@@ -120,9 +121,10 @@ async def misc(callback: CallbackQuery) -> None:
         await callback.answer("Доступ запрещён", show_alert=True)
         return
     rows = [
-        [button("🎨 Темы", "themes"), button("📢 Объявления", "announcement:list")],
-        [button("📲 Push", "push"), button("👮 Администраторы", "admins")],
-        [button("🧾 Журнал", "audit:0"), button("💳 Продажи", "sales")],
+        [button("💳 Подписки", "subscription:admin"), button("🎨 Темы", "themes")],
+        [button("📢 Объявления", "announcement:list"), button("📲 Push", "push")],
+        [button("👮 Администраторы", "admins"), button("🧾 Журнал", "audit:0")],
+        [button("💳 Продажи", "sales")],
         [button("⬅️ Главное меню", "home")],
     ]
     if callback.message:
@@ -163,6 +165,7 @@ async def main() -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
     dispatcher.include_router(management_router)
+    dispatcher.include_router(subscription_admin_router)
     dispatcher.include_router(features_router)
     dispatcher.include_router(node_status_router)
     dispatcher.include_router(announcements_router)
