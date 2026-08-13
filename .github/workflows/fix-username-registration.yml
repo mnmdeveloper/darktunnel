@@ -1,0 +1,37 @@
+name: Register Telegram usernames
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[username-reg-fix]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch username registration
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('backend/app/bot_entry.py')
+          s = p.read_text()
+          old = '''async def start(message: Message, state: FSMContext) -> None:\n    if not is_owner(message.from_user.id if message.from_user else None):\n        await message.answer("Доступ запрещён.")\n        return\n    if message.from_user:\n        async with SessionLocal() as session:\n            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))\n            if user is not None:\n                user.telegram_username = message.from_user.username\n                await session.commit()'''
+          new = '''async def start(message: Message, state: FSMContext) -> None:\n    if message.from_user:\n        async with SessionLocal() as session:\n            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))\n            if user is None:\n                user = User(telegram_id=message.from_user.id, telegram_username=message.from_user.username)\n                session.add(user)\n            else:\n                user.telegram_username = message.from_user.username\n            await session.commit()\n    if not is_owner(message.from_user.id if message.from_user else None):\n        await message.answer("Доступ запрещён.")\n        return'''
+          if old not in s:
+              raise SystemExit('start handler anchor not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          python3 -m compileall -q backend/app
+          find backend/app -type d -name __pycache__ -prune -exec rm -rf {} +
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/fix-username-registration.yml
+          git add backend/app .github/workflows/fix-username-registration.yml
+          git commit -m "Register Telegram usernames from user starts [username-reg-fix]"
+          git push
