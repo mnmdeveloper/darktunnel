@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
+from html import escape
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -16,7 +17,7 @@ from .bot_subscription_admin import router as subscription_admin_router
 from .bot_subscription_user_admin import router as subscription_user_admin_router
 from .config import get_settings
 from .db import SessionLocal, init_db
-from .models import Device, ServerHealth, ServerNode, User, UserStatus
+from .models import AuditLog, Device, ServerHealth, ServerNode, User, UserStatus
 from .server_crypto import decrypt_server_config, encrypt_server_config
 from .services import _read_wdtt_password
 from .subscription_access import create_subscription_access, make_access_link
@@ -248,6 +249,43 @@ async def user_devices(c: CallbackQuery) -> None:
         )
 
 
+@menu_router.callback_query(F.data.startswith("subscription:link_send:"))
+async def admin_subscription_link_send(c: CallbackQuery, bot: Bot) -> None:
+    if not is_owner(c.from_user.id):
+        await c.answer("Доступ запрещён", show_alert=True)
+        return
+    user_id = c.data.rsplit(":", 1)[1]
+    async with SessionLocal() as s:
+        user = await s.get(User, user_id)
+        if user is None:
+            await c.answer("Пользователь не найден", show_alert=True)
+            return
+        if not user.telegram_id:
+            await c.answer("У пользователя нет Telegram ID. Пусть сначала нажмёт /start у бота.", show_alert=True)
+            return
+        _, token = await create_subscription_access(s, user, revoke_existing=True)
+        link = make_access_link(token)
+        s.add(AuditLog(admin_id=c.from_user.id, action="subscription.access_link.send", entity_type="user", entity_id=str(user.id)))
+        await s.commit()
+        telegram_id = user.telegram_id
+
+    await c.answer("Ссылка создана. Отправляю…")
+    try:
+        await bot.send_message(
+            telegram_id,
+            "🔗 <b>Ваша ссылка управления DarkTunnel</b>\n\n"
+            "Откройте её в приложении, чтобы посмотреть подписку, устройства и управлять доступом.\n\n"
+            f"<code>{escape(link)}</code>",
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        if c.message:
+            await c.message.answer(f"⚠️ Ссылка создана, но Telegram не доставил сообщение: <code>{escape(str(exc)[:500])}</code>", parse_mode="HTML")
+        return
+    if c.message:
+        await c.message.answer("✅ Ссылка управления отправлена пользователю.")
+
+
 @menu_router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery, state: FSMContext) -> None:
     if is_owner(callback.from_user.id):
@@ -286,7 +324,7 @@ async def stats(callback: CallbackQuery) -> None:
     from .models import Activation
     from sqlalchemy import func
     async with SessionLocal() as session:
-        total_users = int(await session.scalar(select(User.id).select_from(User).count()) or 0) if False else int(await session.scalar(select(func.count(User.id))) or 0)
+        total_users = int(await session.scalar(select(func.count(User.id))) or 0)
         total_links = int(await session.scalar(select(func.count(Activation.id))) or 0)
         total_servers = int(await session.scalar(select(func.count(ServerNode.id)).where(ServerNode.archived_at.is_(None))) or 0)
     text = f"<b>📊 Статистика</b>\n\nПользователей: <b>{total_users}</b>\nСсылок: <b>{total_links}</b>\nСерверов: <b>{total_servers}</b>"
