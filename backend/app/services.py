@@ -1,7 +1,11 @@
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
 
+from aiogram import Bot
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +32,27 @@ def _read_wdtt_password() -> str:
     raise ValueError("WDTT password is not configured")
 
 
+async def _send_activation_to_telegram(telegram_id: int, token: str, duration_days: int, max_devices: int) -> None:
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        return
+    bot = Bot(token=settings.telegram_bot_token)
+    try:
+        link = f"darktunnel://activate?d={token}"
+        await bot.send_message(
+            telegram_id,
+            f"🔐 <b>Вам выдан доступ DarkTunnel</b>\n\n"
+            f"Срок: <b>{duration_days} дн.</b>\n"
+            f"Устройств: <b>{max_devices}</b>\n\n"
+            f"Откройте ссылку в приложении:\n<code>{escape(link)}</code>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        logging.exception("Failed to deliver activation link to Telegram user %s", telegram_id)
+    finally:
+        await bot.session.close()
+
+
 async def create_activation(session: AsyncSession, data: ActivationCreate) -> tuple[Activation, str]:
     expires_at = datetime.now(UTC) + timedelta(hours=data.link_ttl_hours)
     activation = Activation(
@@ -48,6 +73,9 @@ async def create_activation(session: AsyncSession, data: ActivationCreate) -> tu
     session.add(AuditLog(admin_id=data.created_by, action="activation.create", entity_type="activation", entity_id=str(activation.id)))
     await session.commit()
     await session.refresh(activation)
+
+    if data.telegram_id:
+        asyncio.create_task(_send_activation_to_telegram(data.telegram_id, token, data.duration_days, data.max_devices))
     return activation, token
 
 
@@ -73,10 +101,6 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         if user is None:
             raise ValueError("Subscription owner unavailable")
 
-        # A fresh activation link issued by the administrator is an explicit
-        # authorization to restore this installation. It defines a new exact
-        # subscription term; it must not inherit an old test/expired term and
-        # accidentally turn a 3-day activation into a multi-year subscription.
         fresh_activation = activation.user_id is None
         if not fresh_activation and activation.user_id != user.id:
             raise ValueError("Device already belongs to another subscription")
@@ -95,10 +119,6 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
             await session.commit()
             return _result(user, existing_device, refresh_token)
 
-        # A brand-new admin activation replaces the old subscription term with
-        # exactly the number of days specified by that activation. Renewals of
-        # an already-bound activation are handled by the normal subscription
-        # lifecycle and are never allowed to revive a blocked/expired user.
         user.status = UserStatus.active
         user.lifetime = False
         user.subscription_expires_at = now + timedelta(days=activation.duration_days)
@@ -116,8 +136,6 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         await session.commit()
         return _result(user, existing_device, refresh_token)
 
-    # One activation creates ONE subscription/user. Additional allowed devices
-    # are attached to that same user instead of creating another full subscription.
     user: User | None = None
     if activation.user_id is not None:
         user = await session.get(User, activation.user_id)
