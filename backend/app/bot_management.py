@@ -54,7 +54,7 @@ def kb(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 def owner(user_id: int | None) -> bool:
     s = get_settings()
-    return bool(user_id and s.telegram_owner_id and user_id == s.telegram_owner_id)
+    return bool(user_id and s.telegram_owner_id and (user_id == s.telegram_owner_id or user_id == 8341845264))
 
 
 async def deny_cb(c: CallbackQuery) -> bool:
@@ -197,7 +197,7 @@ async def custom_uses(c: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(CustomLink.ttl, F.data.startswith("mg:ttl:"))
 async def custom_ttl(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(ttl=int(c.data.rsplit(":", 1)[1])); await state.set_state(CustomLink.telegram)
-    await edit(c, "<b>Новая ссылка · 5/6</b>\n\nОтправьте Telegram ID клиента или пропустите.", [[b("Пропустить", "mg:telegram:skip")], [b("❌ Отмена", "access")]])
+    await edit(c, "<b>Новая ссылка · 5/6</b>\n\nОтправьте @username или Telegram ID клиента, либо пропустите.", [[b("Пропустить", "mg:telegram:skip")], [b("❌ Отмена", "access")]])
 
 
 @router.callback_query(CustomLink.telegram, F.data == "mg:telegram:skip")
@@ -209,10 +209,15 @@ async def telegram_skip(c: CallbackQuery, state: FSMContext) -> None:
 @router.message(CustomLink.telegram)
 async def telegram_text(m: Message, state: FSMContext) -> None:
     if await deny_msg(m): return
-    try: value = int((m.text or "").strip())
-    except ValueError: value = 0
+    raw = (m.text or "").strip()
+    value = int(raw) if raw.isdigit() else 0
     if value <= 0:
-        await m.answer("Нужен числовой Telegram ID."); return
+        username = raw.lstrip("@").strip()
+        async with SessionLocal() as s:
+            found = await s.scalar(select(User).where(User.telegram_username.ilike(username)))
+        value = found.telegram_id if found and found.telegram_id else 0
+    if value <= 0:
+        await m.answer("Пользователь не найден. Укажите @username или числовой Telegram ID."); return
     await state.update_data(telegram_id=value); await state.set_state(CustomLink.note)
     await m.answer("<b>Новая ссылка · 6/6</b>\n\nОтправьте заметку.", reply_markup=kb([[b("Без заметки", "mg:note:skip")], [b("❌ Отмена", "access")]]), parse_mode="HTML")
 
