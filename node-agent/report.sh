@@ -17,6 +17,7 @@ vkturn_healthy=0
 vkturn_port=56100
 vkturn_version=""
 vkturn_details='{}'
+latency_ms=""
 
 if systemctl is-active --quiet wdtt 2>/dev/null; then wdtt_active=1; wdtt_healthy=1; fi
 if ip link show wdtt0 >/dev/null 2>&1; then wdtt_interface="wdtt0"; fi
@@ -32,6 +33,14 @@ fi
 if ss -lun 2>/dev/null | grep -Eq '(^|:)56100[[:space:]]'; then vkturn_detected=1; vkturn_healthy=1; fi
 if ss -ltn 2>/dev/null | grep -Eq '(^|:)56100[[:space:]]'; then vkturn_detected=1; vkturn_healthy=1; fi
 
+# The server list exposes latency_ms. Populate it from a small, bounded
+# round-trip to the backend so every healthy node can report a value instead
+# of leaving the client with an unknown ping.
+health_time="$(curl -fsS -o /dev/null -w '%{time_total}' --connect-timeout 5 --max-time 10 "$DARKTUNNEL_API_URL/health" 2>/dev/null || true)"
+if [ -n "$health_time" ]; then
+  latency_ms="$(awk -v seconds="$health_time" 'BEGIN { printf "%d", seconds * 1000 + 0.5 }')"
+fi
+
 json_escape() { python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'; }
 json_string() { printf '%s' "$1" | json_escape; }
 
@@ -45,6 +54,7 @@ payload=$(cat <<JSON
     {"type":"amneziawg2","enabled":false,"detected":false,"healthy":false,"host":"","port":null,"interface":"","version":"","details":{"source":"node-agent"}}
   ],
   "online":true,
+  "latency_ms":${latency_ms:-null},
   "uptime_seconds":$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
 }
 JSON
