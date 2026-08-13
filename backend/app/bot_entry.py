@@ -16,9 +16,10 @@ from .bot_subscription_admin import router as subscription_admin_router
 from .bot_subscription_user_admin import router as subscription_user_admin_router
 from .config import get_settings
 from .db import SessionLocal, init_db
-from .models import ServerHealth, ServerNode, User
+from .models import Device, ServerHealth, ServerNode, User, UserStatus
 from .server_crypto import decrypt_server_config, encrypt_server_config
 from .services import _read_wdtt_password
+from .subscription_access import create_subscription_access, make_access_link
 
 menu_router = Router(name="main-menu")
 
@@ -35,6 +36,18 @@ def menu() -> InlineKeyboardMarkup:
         [button("📊 Статистика", "stats")],
         [button("⚙️ Остальное", "misc")],
     ])
+
+
+def user_menu(active: bool) -> InlineKeyboardMarkup:
+    if active:
+        rows = [
+            [button("💳 Моя подписка", "user:subscription")],
+            [button("🔗 Получить ссылку управления", "user:subscription_link")],
+            [button("📱 Мои устройства", "user:devices")],
+        ]
+    else:
+        rows = [[button("🔑 Запросить доступ", "user:request_access")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def is_owner(user_id: int | None) -> bool:
@@ -95,34 +108,157 @@ async def ensure_primary_server() -> None:
         logging.exception("Failed to auto-register primary WDTT server")
 
 
+async def _get_or_create_user(telegram_id: int, username: str | None) -> User:
+    async with SessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+        if user is None:
+            user = User(telegram_id=telegram_id, telegram_username=username)
+            session.add(user)
+        else:
+            user.telegram_username = username
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
 @menu_router.message(CommandStart())
 @menu_router.message(Command("menu"))
 async def start(message: Message, state: FSMContext) -> None:
-    if message.from_user:
-        async with SessionLocal() as session:
-            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
-            if user is None:
-                user = User(telegram_id=message.from_user.id, telegram_username=message.from_user.username)
-                session.add(user)
-            else:
-                user.telegram_username = message.from_user.username
-            await session.commit()
-    if not is_owner(message.from_user.id if message.from_user else None):
-        await message.answer("Доступ запрещён.")
+    if not message.from_user:
+        return
+    user = await _get_or_create_user(message.from_user.id, message.from_user.username)
+    if not is_owner(message.from_user.id):
+        await state.clear()
+        active = user.status == UserStatus.active and (user.lifetime or (user.subscription_expires_at and user.subscription_expires_at > datetime.now(UTC)))
+        if active:
+            expiry = "бессрочно" if user.lifetime else user.subscription_expires_at.astimezone().strftime("%d.%m.%Y %H:%M")
+            await message.answer(
+                f"<b>DarkTunnel</b>\n\nВаша подписка активна до: <b>{expiry}</b>.\n\nВыберите действие:",
+                reply_markup=user_menu(True),
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(
+                "<b>DarkTunnel</b>\n\nУ вас пока нет активной подписки. Нажмите кнопку ниже — заявка уйдёт администратору.",
+                reply_markup=user_menu(False),
+                parse_mode="HTML",
+            )
         return
     await state.clear()
     await message.answer("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
 
 
+@menu_router.callback_query(F.data == "user:request_access")
+async def user_request_access(c: CallbackQuery) -> None:
+    user = await _get_or_create_user(c.from_user.id, c.from_user.username)
+    settings = get_settings()
+    admins = {settings.telegram_owner_id, 8341845264}
+    username = f"@{c.from_user.username}" if c.from_user.username else "—"
+    text = (
+        "<b>🔑 Новый запрос доступа</b>\n\n"
+        f"Telegram ID: <code>{c.from_user.id}</code>\n"
+        f"Username: <b>{username}</b>\n"
+        f"User ID: <code>{user.id}</code>\n\n"
+        "Выдайте пользователю срок и activation-ссылку в админке."
+    )
+    sent = 0
+    for admin_id in admins:
+        if not admin_id:
+            continue
+        try:
+            await c.bot.send_message(
+                admin_id,
+                text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [button("👤 Открыть пользователя", f"mg:user:view:{user.id}")],
+                    [button("💳 Подписки", "subscription:admin")],
+                ]),
+            )
+            sent += 1
+        except Exception:
+            logging.exception("Failed to notify admin about access request")
+    await c.answer("Заявка отправлена администратору" if sent else "Не удалось отправить заявку", show_alert=True)
+    if c.message:
+        await c.message.edit_text(
+            "<b>Заявка отправлена</b>\n\nАдминистратор получил ваш Telegram ID и username и сможет выдать доступ.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button("🔄 Обновить", "home")]]),
+            parse_mode="HTML",
+        )
+
+
+@menu_router.callback_query(F.data == "user:subscription")
+async def user_subscription(c: CallbackQuery) -> None:
+    async with SessionLocal() as s:
+        user = await s.scalar(select(User).where(User.telegram_id == c.from_user.id))
+    if user is None:
+        await c.answer("Пользователь не найден", show_alert=True)
+        return
+    expiry = "бессрочно" if user.lifetime else (user.subscription_expires_at.astimezone().strftime("%d.%m.%Y %H:%M") if user.subscription_expires_at else "—")
+    active = user.status == UserStatus.active and (user.lifetime or (user.subscription_expires_at and user.subscription_expires_at > datetime.now(UTC)))
+    await c.answer()
+    if c.message:
+        await c.message.edit_text(
+            f"<b>💳 Моя подписка</b>\n\nСтатус: <b>{'активна' if active else 'неактивна'}</b>\nДо: <b>{expiry}</b>\nTelegram ID: <code>{c.from_user.id}</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [button("🔗 Получить ссылку управления", "user:subscription_link")],
+                [button("📱 Мои устройства", "user:devices")],
+                [button("⬅️ Назад", "home")],
+            ]),
+            parse_mode="HTML",
+        )
+
+
+@menu_router.callback_query(F.data == "user:subscription_link")
+async def user_subscription_link(c: CallbackQuery) -> None:
+    async with SessionLocal() as s:
+        user = await s.scalar(select(User).where(User.telegram_id == c.from_user.id))
+        if user is None:
+            await c.answer("Пользователь не найден", show_alert=True)
+            return
+        active = user.status == UserStatus.active and (user.lifetime or (user.subscription_expires_at and user.subscription_expires_at > datetime.now(UTC)))
+        if not active:
+            await c.answer("Активной подписки нет", show_alert=True)
+            return
+        _, token = await create_subscription_access(s, user, revoke_existing=True)
+        await s.commit()
+    await c.answer("Ссылка создана")
+    if c.message:
+        await c.message.answer(
+            f"<b>🔗 Ваша ссылка управления DarkTunnel</b>\n\n<code>{make_access_link(token)}</code>",
+            parse_mode="HTML",
+        )
+
+
+@menu_router.callback_query(F.data == "user:devices")
+async def user_devices(c: CallbackQuery) -> None:
+    async with SessionLocal() as s:
+        user = await s.scalar(select(User).where(User.telegram_id == c.from_user.id))
+        devices = [] if user is None else (await s.execute(select(Device).where(Device.user_id == user.id, Device.revoked_at.is_(None)).order_by(Device.created_at.asc()))).scalars().all()
+    lines = [
+        f"• <code>{d.installation_id[-8:]}</code> · iOS {d.ios_version or '—'} · {d.last_seen_at.astimezone().strftime('%d.%m.%Y %H:%M')}"
+        for d in devices[:10]
+    ] or ["—"]
+    await c.answer()
+    if c.message:
+        await c.message.edit_text(
+            "<b>📱 Мои устройства</b>\n\n" + "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button("⬅️ Назад", "home")]]),
+            parse_mode="HTML",
+        )
+
+
 @menu_router.callback_query(F.data == "home")
 async def home(callback: CallbackQuery, state: FSMContext) -> None:
-    if not is_owner(callback.from_user.id):
-        await callback.answer("Доступ запрещён", show_alert=True)
+    if is_owner(callback.from_user.id):
+        await state.clear()
+        if callback.message:
+            await callback.message.edit_text("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
+        await callback.answer()
         return
-    await state.clear()
-    if callback.message:
-        await callback.message.edit_text("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
     await callback.answer()
+    if callback.message:
+        await callback.message.edit_text("<b>DarkTunnel</b>\n\nНажмите /start, чтобы открыть меню.", parse_mode="HTML")
 
 
 @menu_router.callback_query(F.data == "misc")
@@ -147,10 +283,10 @@ async def stats(callback: CallbackQuery) -> None:
     if not is_owner(callback.from_user.id):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
-    from .models import Activation, User
+    from .models import Activation
     from sqlalchemy import func
     async with SessionLocal() as session:
-        total_users = int(await session.scalar(select(func.count(User.id))) or 0)
+        total_users = int(await session.scalar(select(User.id).select_from(User).count()) or 0) if False else int(await session.scalar(select(func.count(User.id))) or 0)
         total_links = int(await session.scalar(select(func.count(Activation.id))) or 0)
         total_servers = int(await session.scalar(select(func.count(ServerNode.id)).where(ServerNode.archived_at.is_(None))) or 0)
     text = f"<b>📊 Статистика</b>\n\nПользователей: <b>{total_users}</b>\nСсылок: <b>{total_links}</b>\nСерверов: <b>{total_servers}</b>"
@@ -174,8 +310,6 @@ async def main() -> None:
     bot = Bot(token=settings.telegram_bot_token)
     dispatcher = Dispatcher()
     dispatcher.include_router(menu_router)
-    # This router must precede the legacy user-management router because both
-    # use mg:user:view:* callbacks. It provides the complete subscription UI.
     dispatcher.include_router(subscription_user_admin_router)
     dispatcher.include_router(management_router)
     dispatcher.include_router(subscription_admin_router)
