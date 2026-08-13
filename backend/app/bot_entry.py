@@ -30,7 +30,7 @@ def button(text: str, data: str) -> InlineKeyboardButton:
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [button("🔑 Создать ссылку", "mg:link:new")],
-        [button("👥 Пользователи", "users:0"), button("🖥 Серверы", "servers")],
+        [button("💳 Управление подписками", "subscription:admin"), button("🖥 Серверы", "servers")],
         [button("📡 Состояние нод", "node:status")],
         [button("📊 Статистика", "stats")],
         [button("⚙️ Остальное", "misc")],
