@@ -7,22 +7,20 @@ final class LiveActivityController {
 
     private var activity: Activity<DarkTunnelActivityAttributes>?
 
+    private let staleInterval: TimeInterval = 60 * 60
+
     func start(server: String, latency: Int, transport: String) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         let state = makeState(server: server, latency: latency, transport: transport, status: "Подключено")
 
-        // Reuse the existing activity when possible. This avoids creating a
-        // second Dynamic Island after reconnecting or restoring system state.
         if let activity {
-            Task { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(10))) }
+            Task { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleInterval))) }
             return
         }
 
-        // The app can be relaunched while an activity is still alive. Recover
-        // that activity instead of leaving a stale one behind.
         if let existing = Activity<DarkTunnelActivityAttributes>.activities.first {
             activity = existing
-            Task { await existing.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(10))) }
+            Task { await existing.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleInterval))) }
             return
         }
 
@@ -30,11 +28,12 @@ final class LiveActivityController {
         do {
             activity = try Activity.request(
                 attributes: attributes,
-                content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(10)),
+                content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleInterval)),
                 pushType: nil
             )
         } catch {
-            print("Live Activity start failed: \(error)")
+            print("Live Activity start failed: \(error)
+")
         }
     }
 
@@ -44,7 +43,7 @@ final class LiveActivityController {
         guard let target else { return }
         activity = target
         Task {
-            await target.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(10)))
+            await target.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleInterval)))
         }
     }
 
