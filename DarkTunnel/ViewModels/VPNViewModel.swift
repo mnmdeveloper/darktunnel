@@ -15,8 +15,7 @@ final class VPNViewModel: ObservableObject {
     @Published var liveActivitiesEnabled = UserDefaults.standard.object(forKey: "liveActivitiesEnabled") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(liveActivitiesEnabled, forKey: "liveActivitiesEnabled")
-            if liveActivitiesEnabled { syncLiveActivity() }
-            else { LiveActivityController.shared.end() }
+            if liveActivitiesEnabled { syncLiveActivity() } else { LiveActivityController.shared.end() }
         }
     }
     @Published var connectionError: String?
@@ -32,6 +31,7 @@ final class VPNViewModel: ObservableObject {
     private var latencyMonitorTask: Task<Void, Never>?
 
     init() {
+        if UserDefaults.standard.object(forKey: "usesAutomaticServer") == nil { UserDefaults.standard.set(true, forKey: "usesAutomaticServer") }
         if let raw = UserDefaults.standard.string(forKey: "preferredTransport"), let value = TransportKind(rawValue: raw) { preferredTransport = value }
         restoreLocalServers()
         Task { await restoreSystemState() }
@@ -51,25 +51,14 @@ final class VPNViewModel: ObservableObject {
         case .reconnecting: return "Переподключение через \(activeTransport.rawValue)"
         }
     }
-
-    var pingText: String {
-        let latency = effectiveSelectedLatency
-        return latency > 0 ? "\(latency) мс" : "—"
-    }
-
-    var effectiveSelectedLatency: Int {
-        if selectedServer.latencyMilliseconds > 0 { return selectedServer.latencyMilliseconds }
-        return remoteServers[selectedServer.id]?.latencyMS ?? 0
-    }
-
+    var pingText: String { let latency = effectiveSelectedLatency; return latency > 0 ? "\(latency) мс" : "—" }
+    var effectiveSelectedLatency: Int { if selectedServer.latencyMilliseconds > 0 { return selectedServer.latencyMilliseconds }; return remoteServers[selectedServer.id]?.latencyMS ?? 0 }
     private var normalizedVKLink: String { vkCallLink.trimmingCharacters(in: .whitespacesAndNewlines) }
-
     var hasValidVKLink: Bool {
         guard let url = URL(string: normalizedVKLink), let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), scheme == "https" || scheme == "http" else { return false }
         let validHost = host == "vk.ru" || host.hasSuffix(".vk.ru") || host == "vk.com" || host.hasSuffix(".vk.com") || host == "vk.me" || host.hasSuffix(".vk.me")
         return validHost && url.path.contains("/call/")
     }
-
     func saveVKLink() { vkCallLink = normalizedVKLink; UserDefaults.standard.set(vkCallLink, forKey: "vkCallLink") }
     func refreshConnectivity() { Task { connectivity = await ConnectivityDiagnostics.shared.run(); if preferredTransport == .automatic { resolvedTransport = connectivity.recommendedTransport } } }
 
@@ -86,7 +75,7 @@ final class VPNViewModel: ObservableObject {
             ServerDirectoryCache.save(merged)
             apply(merged, preserveSelection: true)
             connectionError = nil
-            let awgCount = secureServers.filter { !($0.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }.count
+            let awgCount = merged.filter { !($0.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }.count
             AppLog.shared.info("Servers", "Список серверов обновлён: \(servers.count), AWG-профилей: \(awgCount)")
         } catch {
             if servers.isEmpty { restoreLocalServers() }
@@ -98,24 +87,21 @@ final class VPNViewModel: ObservableObject {
     func toggleConnection() { switch state { case .disconnected: connect(); case .connecting, .reconnecting, .connected: disconnect() } }
 
     func connect() {
-        connectionError = nil
-        state = .connecting
+        connectionError = nil; state = .connecting
         Task {
             if servers.isEmpty { restoreLocalServers() }
             guard !servers.isEmpty else { connectionError = "Нет сохранённой конфигурации. Повторите активацию по ссылке"; state = .disconnected; return }
-            if usesAutomaticServer { selectBestLocalServer() }
             connectivity = await ConnectivityDiagnostics.shared.run()
             let chosenTransport: TransportKind
             if preferredTransport == .automatic { chosenTransport = connectivity.recommendedTransport; resolvedTransport = chosenTransport } else { chosenTransport = preferredTransport; resolvedTransport = chosenTransport }
-            if usesAutomaticServer { selectBestServer(for: chosenTransport) }
+            if usesAutomaticServer {
+                if chosenTransport == .amneziaWG {
+                    guard await selectBestAmneziaServer() else { connectionError = "Нет доступного сервера с конфигурацией AmneziaWG"; state = .disconnected; return }
+                } else { selectBestServer(for: chosenTransport) }
+            }
             if chosenTransport == .vkTurn && !hasValidVKLink { connectionError = "Добавьте ссылку VK-звонка для режима VK обход"; state = .disconnected; return }
-            if chosenTransport == .amneziaWG {
-                let ready = await ensureAmneziaProfile()
-                if !ready {
-                    connectionError = usesAutomaticServer ? "Нет доступного сервера с конфигурацией AmneziaWG" : "Для этого сервера нет конфигурации AmneziaWG"
-                    state = .disconnected
-                    return
-                }
+            if chosenTransport == .amneziaWG && !hasAmneziaProfile(for: selectedServer) {
+                guard await ensureAmneziaProfile() else { connectionError = usesAutomaticServer ? "Нет доступного сервера с конфигурацией AmneziaWG" : "Для этого сервера нет конфигурации AmneziaWG"; state = .disconnected; return }
             }
             saveVKLink()
             guard let profile = remoteServers[selectedServer.id]?.tunnelProfile ?? ActivationStore.shared.serverProfile else { connectionError = "Сохранённая конфигурация сервера повреждена"; state = .disconnected; return }
@@ -128,47 +114,20 @@ final class VPNViewModel: ObservableObject {
                 startLatencyMonitor()
                 if liveActivitiesEnabled { syncLiveActivity() }
                 Task { connectivity = await ConnectivityDiagnostics.shared.run(); await refreshServers() }
-            } catch { connectionError = "Не удалось подключиться: \(error.localizedDescription)"; state = .disconnected; stopLatencyMonitor(); LiveActivityController.shared.end(); AppLog.shared.error("VPN", error.localizedDescription) }
+            } catch {
+                connectionError = "Не удалось подключиться: \(error.localizedDescription)"; state = .disconnected; stopLatencyMonitor(); LiveActivityController.shared.end(); AppLog.shared.error("VPN", error.localizedDescription)
+            }
         }
     }
 
-    func disconnect() {
-        stopLatencyMonitor()
-        VPNController.shared.disconnect()
-        withAnimation(.snappy(duration: 0.3)) { state = .disconnected }
-        LiveActivityController.shared.end()
-    }
-
-    func syncLiveActivity() {
-        guard liveActivitiesEnabled, state == .connected else { return }
-        LiveActivityController.shared.start(
-            server: selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city,
-            latency: effectiveSelectedLatency,
-            transport: activeTransport.rawValue
-        )
-    }
-
-    func repairLiveActivity() {
-        if state == .connected && liveActivitiesEnabled {
-            LiveActivityController.shared.end()
-            LiveActivityController.shared.start(
-                server: selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city,
-                latency: effectiveSelectedLatency,
-                transport: activeTransport.rawValue
-            )
-        } else {
-            LiveActivityController.shared.end()
-        }
-    }
+    func disconnect() { stopLatencyMonitor(); VPNController.shared.disconnect(); withAnimation(.snappy(duration: 0.3)) { state = .disconnected }; LiveActivityController.shared.end() }
+    func syncLiveActivity() { guard liveActivitiesEnabled, state == .connected else { return }; LiveActivityController.shared.start(server: selectedServer.city.isEmpty ? selectedServer.name : selectedServer.city, latency: effectiveSelectedLatency, transport: activeTransport.rawValue) }
+    func repairLiveActivity() { if state == .connected && liveActivitiesEnabled { LiveActivityController.shared.end(); syncLiveActivity() } else { LiveActivityController.shared.end() } }
 
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
-        case .background:
-            wasConnectedBeforeSleep = state == .connected
-            if disconnectOnSleep && wasConnectedBeforeSleep { disconnect() }
-        case .active:
-            if wasConnectedBeforeSleep && reconnectAfterWake && state == .disconnected { wasConnectedBeforeSleep = false; connect() }
-            if state == .connected { startLatencyMonitor(); syncLiveActivity() }
+        case .background: wasConnectedBeforeSleep = state == .connected; if disconnectOnSleep && wasConnectedBeforeSleep { disconnect() }
+        case .active: if wasConnectedBeforeSleep && reconnectAfterWake && state == .disconnected { wasConnectedBeforeSleep = false; connect() }; if state == .connected { startLatencyMonitor(); syncLiveActivity() }
         default: break
         }
     }
@@ -180,13 +139,8 @@ final class VPNViewModel: ObservableObject {
             if let transport = restored.transport { resolvedTransport = transport }
             state = restored.status == .connected ? .connected : .connecting
             await refreshServers()
-            if state == .connected {
-                await measureTunnelLatency(updateLiveActivity: true)
-                startLatencyMonitor()
-                syncLiveActivity()
-            }
-        default:
-            LiveActivityController.shared.end()
+            if state == .connected { await measureTunnelLatency(updateLiveActivity: true); startLatencyMonitor(); syncLiveActivity() }
+        default: LiveActivityController.shared.end()
         }
     }
 
@@ -194,50 +148,52 @@ final class VPNViewModel: ObservableObject {
     func selectAutomaticServer() { usesAutomaticServer = true; selectBestLocalServer(); reconnectIfNeeded() }
     func select(_ server: VPNServer) { usesAutomaticServer = false; selectedServer = server; reconnectIfNeeded() }
 
-    private func ensureAmneziaProfile() async -> Bool {
-        let candidates: [VPNServer] = usesAutomaticServer ? servers.sorted(by: latencyOrder) : [selectedServer]
-        for candidate in candidates {
-            guard let remote = remoteServers[candidate.id] else { continue }
-            if remote.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                selectedServer = candidate
-                return true
-            }
-            guard let secure = try? await ServerDirectoryClient.shared.fetchActivatedServer(remote.id) else { continue }
-            let merged = ServerDirectoryCache.mergeSecure(secure, into: Array(remoteServers.values))
+    private func hasAmneziaProfile(for server: VPNServer) -> Bool { !(remoteServers[server.id]?.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) }
+
+    private func selectBestAmneziaServer() async -> Bool {
+        let candidates = servers.sorted(by: latencyOrder)
+        let ids = candidates.compactMap { remoteServers[$0.id]?.id }
+        let secure = await ServerDirectoryClient.shared.fetchActivatedServers(ids)
+        var merged = Array(remoteServers.values)
+        for item in secure { merged = ServerDirectoryCache.mergeSecure(item, into: merged) }
+        if !secure.isEmpty {
             ServerDirectoryCache.save(merged)
             remoteServers = Dictionary(uniqueKeysWithValues: merged.map { ($0.displayModel.id, $0) })
-            selectedServer = secure.displayModel
-            if secure.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { return true }
+            servers = merged.map(\.displayModel)
         }
-        return false
+        guard let best = servers.filter(hasAmneziaProfile).min(by: latencyOrder) else { return false }
+        selectedServer = best
+        return true
+    }
+
+    private func ensureAmneziaProfile() async -> Bool {
+        let candidates = usesAutomaticServer ? servers.sorted(by: latencyOrder) : [selectedServer]
+        let secure = await ServerDirectoryClient.shared.fetchActivatedServers(candidates.compactMap { remoteServers[$0.id]?.id })
+        var merged = Array(remoteServers.values)
+        for item in secure { merged = ServerDirectoryCache.mergeSecure(item, into: merged) }
+        ServerDirectoryCache.save(merged)
+        remoteServers = Dictionary(uniqueKeysWithValues: merged.map { ($0.displayModel.id, $0) })
+        guard let best = candidates.compactMap({ candidate -> VPNServer? in guard let remote = remoteServers[candidate.id], !((remote.amneziaConfig ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else { return nil }; return remote.displayModel }).min(by: latencyOrder) else { return false }
+        selectedServer = best
+        return true
     }
 
     private func startLatencyMonitor() {
-        stopLatencyMonitor()
-        guard state == .connected else { return }
+        stopLatencyMonitor(); guard state == .connected else { return }
         latencyMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(7))
-                guard !Task.isCancelled else { return }
-                guard let self, self.state == .connected else { return }
-                await self.measureTunnelLatency(updateLiveActivity: true)
+                try? await Task.sleep(for: .seconds(7)); guard !Task.isCancelled else { return }; guard let self, self.state == .connected else { return }; await self.measureTunnelLatency(updateLiveActivity: true)
             }
         }
     }
-
-    private func stopLatencyMonitor() {
-        latencyMonitorTask?.cancel()
-        latencyMonitorTask = nil
-    }
+    private func stopLatencyMonitor() { latencyMonitorTask?.cancel(); latencyMonitorTask = nil }
 
     private func measureTunnelLatency(updateLiveActivity: Bool = false) async {
         guard state == .connected, let url = URL(string: "https://api.31-77-148-80.sslip.io/health") else { return }
-        isMeasuringLatency = true
-        defer { isMeasuringLatency = false }
+        isMeasuringLatency = true; defer { isMeasuringLatency = false }
         var samples: [Int] = []
         for _ in 0..<3 {
-            var request = URLRequest(url: url); request.timeoutInterval = 5; request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            var request = URLRequest(url: url); request.timeoutInterval = 5; request.cachePolicy = .reloadIgnoringLocalCacheData; request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             let started = ContinuousClock.now
             do {
                 let (_, response) = try await URLSession.shared.data(for: request)
@@ -248,8 +204,7 @@ final class VPNViewModel: ObservableObject {
             } catch { }
         }
         guard !samples.isEmpty else { return }
-        samples.sort(); updateSelectedLatency(samples[samples.count / 2])
-        if updateLiveActivity { syncLiveActivity() }
+        samples.sort(); updateSelectedLatency(samples[samples.count / 2]); if updateLiveActivity { syncLiveActivity() }
     }
 
     private func updateSelectedLatency(_ latency: Int) {
@@ -261,27 +216,26 @@ final class VPNViewModel: ObservableObject {
     private func restoreLocalServers() { let merged = ServerDirectoryCache.merge(ServerDirectoryCache.load(), provisioned: ActivationStore.shared.serverProfile); if !merged.isEmpty { ServerDirectoryCache.save(merged) }; apply(merged, preserveSelection: false) }
 
     private func apply(_ remote: [RemoteVPNServer], preserveSelection: Bool) {
-        let previousID = selectedServer.id
-        let previousLatency = selectedServer.latencyMilliseconds
-        remoteServers = Dictionary(uniqueKeysWithValues: remote.map { ($0.displayModel.id, $0) })
-        servers = remote.map(\.displayModel)
-        if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) {
-            selectedServer = existing
-            if previousLatency > 0 { updateSelectedLatency(previousLatency) }
-        } else {
-            selectBestLocalServer()
-        }
+        let previousID = selectedServer.id; let previousLatency = selectedServer.latencyMilliseconds
+        remoteServers = Dictionary(uniqueKeysWithValues: remote.map { ($0.displayModel.id, $0) }); servers = remote.map(\.displayModel)
+        if preserveSelection, let existing = servers.first(where: { $0.id == previousID }) { selectedServer = existing; if previousLatency > 0 { updateSelectedLatency(previousLatency) } }
+        else if usesAutomaticServer { selectBestLocalServer() }
+        else if let first = servers.first { selectedServer = first }
     }
 
-    private func selectBestLocalServer() { guard !servers.isEmpty else { return }; selectedServer = servers.min { latencyOrder($0, $1) } ?? servers[0] }
+    private func selectBestLocalServer() {
+        guard !servers.isEmpty else { return }
+        selectedServer = servers.filter(hasAmneziaProfile).min(by: latencyOrder) ?? servers.min(by: latencyOrder) ?? servers[0]
+    }
     private func selectBestServer(for transport: TransportKind) {
         guard !servers.isEmpty else { return }
-        if transport == .amneziaWG {
-            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
-            if let best = candidates.min(by: latencyOrder) { selectedServer = best; return }
-        }
-        if let best = servers.min(by: latencyOrder) { selectedServer = best }
+        if transport == .amneziaWG, let best = servers.filter(hasAmneziaProfile).min(by: latencyOrder) { selectedServer = best; return }
+        selectedServer = servers.min(by: latencyOrder) ?? servers[0]
     }
-    private func latencyOrder(_ lhs: VPNServer, _ rhs: VPNServer) -> Bool { (lhs.latencyMilliseconds > 0 ? lhs.latencyMilliseconds : Int.max) < (rhs.latencyMilliseconds > 0 ? rhs.latencyMilliseconds : Int.max) }
+    private func latencyOrder(_ lhs: VPNServer, _ rhs: VPNServer) -> Bool {
+        let left = lhs.latencyMilliseconds > 0 ? lhs.latencyMilliseconds : (remoteServers[lhs.id]?.latencyMS ?? Int.max)
+        let right = rhs.latencyMilliseconds > 0 ? rhs.latencyMilliseconds : (remoteServers[rhs.id]?.latencyMS ?? Int.max)
+        return left < right
+    }
     private func reconnectIfNeeded() { guard state == .connected else { return }; state = .reconnecting; stopLatencyMonitor(); VPNController.shared.disconnect(); Task { try? await Task.sleep(for: .milliseconds(450)); connect() } }
 }
