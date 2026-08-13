@@ -11,7 +11,7 @@ struct AppStoreUpdateInfo: Equatable {
 final class AppUpdateService: ObservableObject {
     static let shared = AppUpdateService()
 
-    @Published private(set) var update: AppStoreUpdateInfo?
+    @Published var update: AppStoreUpdateInfo?
     @Published private(set) var isChecking = false
 
     private let bundleID = "app.lavender3512.currant6944"
