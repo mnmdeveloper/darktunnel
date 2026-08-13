@@ -98,15 +98,18 @@ async def ensure_primary_server() -> None:
 @menu_router.message(CommandStart())
 @menu_router.message(Command("menu"))
 async def start(message: Message, state: FSMContext) -> None:
-    if not is_owner(message.from_user.id if message.from_user else None):
-        await message.answer("Доступ запрещён.")
-        return
     if message.from_user:
         async with SessionLocal() as session:
             user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))
-            if user is not None:
+            if user is None:
+                user = User(telegram_id=message.from_user.id, telegram_username=message.from_user.username)
+                session.add(user)
+            else:
                 user.telegram_username = message.from_user.username
-                await session.commit()
+            await session.commit()
+    if not is_owner(message.from_user.id if message.from_user else None):
+        await message.answer("Доступ запрещён.")
+        return
     await state.clear()
     await message.answer("<b>DarkTunnel Admin</b>\n\nВыберите действие:", reply_markup=menu(), parse_mode="HTML")
 
