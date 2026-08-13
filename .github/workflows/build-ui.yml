@@ -9,39 +9,96 @@ on:
 jobs:
   build:
     runs-on: macos-15
-
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
-
       - name: Checkout VK TURN engine
         uses: actions/checkout@v4
         with:
           repository: anton48/vk-turn-proxy-ios
           ref: main
           path: Vendor/vk-turn-proxy-ios
-
+      - name: Checkout AmneziaWG Apple engine
+        uses: actions/checkout@v4
+        with:
+          repository: amnezia-vpn/amneziawg-apple
+          ref: master
+          path: Vendor/amneziawg-apple
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
           cache: true
-          cache-dependency-path: Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
-
+          cache-dependency-path: |
+            Vendor/vk-turn-proxy-ios/WireGuardBridge/go.sum
+            Vendor/amneziawg-apple/Sources/WireGuardKitGo/go.sum
       - name: Install XcodeGen
         run: brew install xcodegen
-
       - name: Build WireGuard TURN bridge
         working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
         run: |
           set -euo pipefail
+          rm -rf .tmp build
+          chmod -R u+rwX .
+          mkdir -m 700 -p .tmp
           make clean
           make xcframework
           test -d build/WireGuardTURN.xcframework
-
+      - name: Build AmneziaWG bridge framework
+        working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
+        run: |
+          set -euo pipefail
+          rm -rf .tmp out
+          chmod -R u+rwX .
+          mkdir -m 700 -p .tmp
+          make clean
+          make build PLATFORM_NAME=iphoneos ARCHS=arm64 CONFIGURATION_BUILD_DIR="$PWD/out"
+          test -f out/libwg-go.a
+          mkdir -p out/AmneziaWG.framework/Headers out/AmneziaWG.framework/Modules
+          cp out/libwg-go.a out/AmneziaWG.framework/AmneziaWG
+          cat > out/AmneziaWG.framework/Headers/AmneziaWGBridge.h <<'EOF'
+          #ifndef AMNEZIAWG_BRIDGE_H
+          #define AMNEZIAWG_BRIDGE_H
+          #include <stdint.h>
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          int32_t wgTurnOn(const char *settings, int32_t tunFd);
+          void wgTurnOff(int32_t tunnelHandle);
+          void wgBumpSockets(int32_t tunnelHandle);
+          void wgDisableSomeRoamingForBrokenMobileSemantics(int32_t tunnelHandle);
+          char *wgVersion(void);
+          #define awgTurnOn wgTurnOn
+          #define awgTurnOff wgTurnOff
+          #define awgBumpSockets wgBumpSockets
+          #define awgDisableSomeRoamingForBrokenMobileSemantics wgDisableSomeRoamingForBrokenMobileSemantics
+          #define awgVersion wgVersion
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          EOF
+          cat > out/AmneziaWG.framework/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>CFBundleExecutable</key><string>AmneziaWG</string>
+          <key>CFBundleIdentifier</key><string>app.lavender3512.AmneziaWG</string>
+          <key>CFBundleName</key><string>AmneziaWG</string>
+          <key>CFBundlePackageType</key><string>FMWK</string>
+          <key>CFBundleShortVersionString</key><string>1.0</string>
+          <key>CFBundleVersion</key><string>1</string>
+          </dict></plist>
+          EOF
+          cat > out/AmneziaWG.framework/Modules/module.modulemap <<'EOF'
+          framework module AmneziaWG {
+            umbrella header "../Headers/AmneziaWGBridge.h"
+            export *
+          }
+          EOF
+          test -f out/AmneziaWG.framework/AmneziaWG
       - name: Generate full project
         run: xcodegen generate --spec project-unsigned.yml
-
       - name: Build real device configuration without signing
         run: |
           set -o pipefail
@@ -52,15 +109,26 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY='' \
-            DEVELOPMENT_TEAM='' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' DEVELOPMENT_TEAM='' \
             clean build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
-
       - name: Verify embedded extensions
         run: |
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
           test -d "$APP_PATH"
           test -d "$APP_PATH/PlugIns/PacketTunnel.appex"
           test -d "$APP_PATH/PlugIns/DarkTunnelLiveActivity.appex"
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/DarkTunnel.app"
+          rm -rf "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/DarkTunnel-unsigned.ipa"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/DarkTunnel.app"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/DarkTunnel-unsigned.ipa"
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkTunnel-unsigned-ipa
+          path: ${{ runner.temp }}/DarkTunnel-unsigned.ipa
+          if-no-files-found: error
