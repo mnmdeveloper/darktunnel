@@ -20,6 +20,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     status: Mapped[UserStatus] = mapped_column(Enum(UserStatus), default=UserStatus.active)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     note: Mapped[str] = mapped_column(Text, default="")
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     subscription_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
