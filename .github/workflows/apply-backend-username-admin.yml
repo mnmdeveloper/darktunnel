@@ -1,0 +1,100 @@
+name: Apply backend username/admin fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[backend-fix]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch backend
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          ADMIN = 8341845264
+          root = Path('backend/app')
+
+          # 1) Make the second Telegram account an admin everywhere the
+          #    existing single-owner guard is used.
+          for p in root.glob('*.py'):
+              s = p.read_text()
+              original = s
+              s = s.replace('user_id == s.telegram_owner_id', f'(user_id == s.telegram_owner_id or user_id == {ADMIN})')
+              s = s.replace('user_id == settings.telegram_owner_id', f'(user_id == settings.telegram_owner_id or user_id == {ADMIN})')
+              if s != original:
+                  p.write_text(s)
+
+          # 2) DB compatibility migration for the username field.
+          p = root / 'db.py'
+          s = p.read_text()
+          marker = 'ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(64)'
+          if marker not in s:
+              needle = '        await connection.execute(text("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS color_hex VARCHAR(9) NOT NULL DEFAULT \'#60758F\'"))'
+              replacement = '        await connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(64)"))\n        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_telegram_username ON users(telegram_username)"))\n' + needle
+              if needle not in s:
+                  raise SystemExit('db.py migration anchor not found')
+              s = s.replace(needle, replacement, 1)
+              p.write_text(s)
+
+          # 3) Store Telegram username whenever an admin user opens /start.
+          p = root / 'bot_entry.py'
+          s = p.read_text()
+          if 'telegram_username = message.from_user.username' not in s:
+              imp = 'from .models import ServerHealth, ServerNode'
+              if imp in s:
+                  s = s.replace(imp, 'from .models import ServerHealth, ServerNode, User', 1)
+              anchor = '    await state.clear()\n    await message.answer("<b>DarkTunnel Admin</b>'
+              # The admin /start itself is not a customer update, so this is
+              # intentionally only used when an existing User has this ID.
+              if anchor in s:
+                  ins = '''    if message.from_user:\n        async with SessionLocal() as session:\n            user = await session.scalar(select(User).where(User.telegram_id == message.from_user.id))\n            if user is not None:\n                user.telegram_username = message.from_user.username\n                await session.commit()\n    await state.clear()\n    await message.answer("<b>DarkTunnel Admin</b>'''
+                  s = s.replace(anchor, ins, 1)
+              p.write_text(s)
+
+          # 4) Allow subscription search by @username.
+          p = root / 'bot_subscription_admin.py'
+          s = p.read_text()
+          old = '    q = (m.text or "").strip(); await state.clear()\n    conditions = [User.note.ilike(f"%{q}%"), func.cast(User.id, String).ilike(f"%{q}%")]'
+          new = '    q = (m.text or "").strip(); username_q = q.lstrip("@").strip(); await state.clear()\n    conditions = [User.note.ilike(f"%{q}%"), User.telegram_username.ilike(f"%{username_q}%"), func.cast(User.id, String).ilike(f"%{q}%")]'
+          if old in s:
+              s = s.replace(old, new, 1)
+          s = s.replace('Отправьте Telegram ID, User ID, Installation ID или заметку пользователя.', 'Отправьте @username, Telegram ID, User ID, Installation ID или заметку пользователя.', 1)
+          s = s.replace('f"Статус: <b>{user.status.value}</b>\\nДо:', 'f"Username: <b>@{user.telegram_username}</b>\\nСтатус: <b>{user.status.value}</b>\\nДо:', 1)
+          p.write_text(s)
+
+          # 5) Custom activation-link flow: accept @username and resolve it
+          #    to the stored numeric Telegram ID before creating the link.
+          p = root / 'bot_management.py'
+          s = p.read_text()
+          old = '''    try: value = int((m.text or "").strip())\n    except ValueError: value = 0\n    if value <= 0:\n        await m.answer("Нужен числовой Telegram ID."); return\n    await state.update_data(telegram_id=value); await state.set_state(CustomLink.note)'''
+          new = '''    raw = (m.text or "").strip()\n    value = int(raw) if raw.isdigit() else 0\n    if value <= 0:\n        username = raw.lstrip("@").strip()\n        async with SessionLocal() as s:\n            found = await s.scalar(select(User).where(User.telegram_username.ilike(username)))\n        value = found.telegram_id if found and found.telegram_id else 0\n    if value <= 0:\n        await m.answer("Пользователь не найден. Укажите @username или числовой Telegram ID."); return\n    await state.update_data(telegram_id=value); await state.set_state(CustomLink.note)'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          s = s.replace('Отправьте Telegram ID клиента или пропустите.', 'Отправьте @username или Telegram ID клиента, либо пропустите.', 1)
+          p.write_text(s)
+
+          # Verify Python syntax before committing.
+          import compileall
+          if not compileall.compile_dir('backend/app', quiet=1):
+              raise SystemExit('Python compile check failed')
+          PY
+      - name: Commit backend fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/apply-backend-username-admin.yml
+          git add backend/app .github/workflows/apply-backend-username-admin.yml
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m "Fix username search and second admin [backend-fix]"
+          git push
