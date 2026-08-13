@@ -38,8 +38,9 @@ jobs:
         working-directory: Vendor/vk-turn-proxy-ios/WireGuardBridge
         run: |
           set -euo pipefail
-          export TMPDIR="$RUNNER_TEMP/build-tmp"
-          mkdir -p "$TMPDIR"
+          export TMPDIR="$PWD/.tmp"
+          rm -rf "$TMPDIR"
+          mkdir -m 700 -p "$TMPDIR"
           make clean
           make xcframework
           test -d build/WireGuardTURN.xcframework
@@ -47,8 +48,9 @@ jobs:
         working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
         run: |
           set -euo pipefail
-          export TMPDIR="$RUNNER_TEMP/build-tmp"
-          mkdir -p "$TMPDIR"
+          export TMPDIR="$PWD/.tmp"
+          rm -rf "$TMPDIR"
+          mkdir -m 700 -p "$TMPDIR"
           rm -rf out
           make clean
           make build PLATFORM_NAME=iphoneos ARCHS=arm64 CONFIGURATION_BUILD_DIR="$PWD/out"
