@@ -22,12 +22,12 @@ struct HomeView: View {
 
             VStack(spacing: 0) {
                 header.padding(.horizontal, 16).padding(.top, 8)
-                Spacer(minLength: 12)
                 if let announcement = announcements.home.first {
                     announcementCard(announcement)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
+                        .padding(.top, 8)
                 }
+                Spacer(minLength: 12)
                 connectionPanel.padding(.horizontal, 16).padding(.bottom, 18)
             }
         }
@@ -45,7 +45,15 @@ struct HomeView: View {
         .onChange(of: viewModel.selectedServer) { _, _ in
             if viewModel.state == .connected { moveCamera(animated: true) }
         }
-        .onChange(of: scenePhase) { _, phase in viewModel.handleScenePhase(phase) }
+        .onChange(of: scenePhase) { _, phase in
+            viewModel.handleScenePhase(phase)
+            if phase == .active {
+                Task {
+                    await announcements.refresh()
+                    if viewModel.state == .connected { viewModel.syncLiveActivity() }
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -133,17 +141,17 @@ struct HomeView: View {
 
     private func announcementCard(_ announcement: DarkTunnelRemoteAnnouncement) -> some View {
         let color = announcement.accentColor
-        return HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "megaphone.fill").foregroundStyle(color).frame(width: 34, height: 34).background(color.opacity(0.16), in: Circle())
-            VStack(alignment: .leading, spacing: 3) {
-                Text(announcement.title).font(.subheadline.weight(.bold))
-                Text(announcement.body).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+        return HStack(alignment: .center, spacing: 9) {
+            Image(systemName: "megaphone.fill").font(.caption).foregroundStyle(color).frame(width: 28, height: 28).background(color.opacity(0.16), in: Circle())
+            VStack(alignment: .leading, spacing: 1) {
+                Text(announcement.title).font(.caption.weight(.bold)).lineLimit(1)
+                Text(announcement.body).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
         }
-        .padding(13)
-        .background(panel.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.75), lineWidth: 1.4) }
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .background(panel.opacity(0.94), in: RoundedRectangle(cornerRadius: 14))
+        .overlay { RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.75), lineWidth: 1.2) }
     }
 
     private func pill(icon: String, title: String, subtitle: String) -> some View {
