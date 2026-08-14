@@ -2,13 +2,14 @@ package app.lavender3512.darktunnel
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.util.Base64
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.SecureRandom
 import java.util.UUID
@@ -16,10 +17,12 @@ import java.util.concurrent.TimeUnit
 
 class ApiClient(private val context: Context) {
     private val prefs = context.getSharedPreferences("darktunnel", Context.MODE_PRIVATE)
+    private val secure = SecureStore(context)
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
         .build()
     private val base = "https://api.31-77-148-80.sslip.io"
 
@@ -35,8 +38,20 @@ class ApiClient(private val context: Context) {
             .let { Base64.encodeToString(it, Base64.NO_WRAP) }
             .also { prefs.edit().putString("public_key", it).apply() }
 
-    fun isActivated(): Boolean = !prefs.getString("refresh_token", null).isNullOrBlank()
-    fun activationToken(): String? = prefs.getString("activation_token", null)
+    private fun secret(name: String): String? {
+        secure.getString(name)?.takeIf { it.isNotBlank() }?.let { return it }
+
+        // One-time migration from the old plaintext SharedPreferences store.
+        val legacy = prefs.getString(name, null)?.takeIf { it.isNotBlank() }
+        if (legacy != null) {
+            secure.putString(name, legacy)
+            prefs.edit().remove(name).apply()
+        }
+        return legacy
+    }
+
+    fun isActivated(): Boolean = !secret("refresh_token").isNullOrBlank()
+    fun activationToken(): String? = secret("activation_token")
 
     fun activate(rawToken: String): Result<Activation> = runCatching {
         val token = normalizeActivationToken(rawToken)
@@ -46,81 +61,76 @@ class ApiClient(private val context: Context) {
             "token" to token,
             "installation_id" to installationId(),
             "public_key" to publicKey(),
-            "app_version" to "0.1.1",
-            "android_version" to android.os.Build.VERSION.RELEASE
+            "app_version" to BuildConfig.VERSION_NAME,
+            "android_version" to Build.VERSION.RELEASE
         )).toRequestBody("application/json".toMediaType())
 
-        val req = Request.Builder()
+        val request = Request.Builder()
             .url("$base/v1/activation/redeem")
             .post(body)
             .header("Accept", "application/json")
             .build()
 
-        http.newCall(req).execute().use { r ->
-            val text = r.body?.string().orEmpty().trim()
-            if (!r.isSuccessful) {
-                throw IllegalStateException("${activationError(text)} (HTTP ${r.code})")
+        http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty().trim()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("${activationError(text)} (HTTP ${response.code})")
             }
 
-            val o = parseObject(text, "Сервер активации вернул некорректный ответ")
-            val s = o.getAsJsonObject("server")
+            val objectResponse = parseObject(text, "Сервер активации вернул некорректный ответ")
+            val serverObject = objectResponse.getAsJsonObject("server")
                 ?: throw IllegalStateException("В ответе активации нет сервера")
-            val server = parseServer(s)
-            val refresh = o["refresh_token"]?.asString?.trim()
+            val server = parseServer(serverObject)
+            validateServer(server)
+
+            val refresh = objectResponse["refresh_token"]?.asString?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?: throw IllegalStateException("Сервер не выдал токен устройства")
-            val expires = o["subscription_expires_at"]?.asString.orEmpty()
+            val expires = objectResponse["subscription_expires_at"]?.asString.orEmpty()
 
-            prefs.edit()
-                .putString("refresh_token", refresh)
-                .putString("activation_token", token)
-                .putString("expires_at", expires)
-                .apply()
+            secure.putString("refresh_token", refresh)
+            secure.putString("activation_token", token)
+            prefs.edit().putString("expires_at", expires).apply()
 
             Activation(expires, refresh, server)
         }
     }
 
     fun servers(): Result<List<Server>> = runCatching {
-        val token = prefs.getString("refresh_token", null)
-            ?: throw IllegalStateException("Нет активации")
-        val req = Request.Builder()
+        val token = secret("refresh_token") ?: throw IllegalStateException("Нет активации")
+        val request = Request.Builder()
             .url("$base/v1/subscription/servers?installation_id=${Uri.encode(installationId())}")
             .header("X-Device-Token", token)
+            .header("Accept", "application/json")
             .get()
             .build()
-        http.newCall(req).execute().use { r ->
-            val text = r.body?.string().orEmpty().trim()
-            if (!r.isSuccessful) {
-                throw IllegalStateException("${apiError(text, "Серверы недоступны")} (HTTP ${r.code})")
+
+        http.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty().trim()
+            if (!response.isSuccessful) {
+                if (response.code == 401 || response.code == 403) {
+                    secure.remove("refresh_token")
+                }
+                throw IllegalStateException("${apiError(text, "Серверы недоступны")} (HTTP ${response.code})")
             }
-            val o = parseObject(text, "Список серверов имеет некорректный формат")
-            o.getAsJsonArray("servers")?.map { parseServer(it.asJsonObject) } ?: emptyList()
+            val objectResponse = parseObject(text, "Список серверов имеет некорректный формат")
+            val servers = objectResponse.getAsJsonArray("servers")?.map { parseServer(it.asJsonObject) } ?: emptyList()
+            servers.forEach(::validateServer)
+            servers
         }
     }
 
-    fun publicServers(): Result<List<Server>> = runCatching {
-        val req = Request.Builder().url("$base/v1/servers").get().build()
-        http.newCall(req).execute().use { r ->
-            val text = r.body?.string().orEmpty().trim()
-            if (!r.isSuccessful) {
-                throw IllegalStateException("${apiError(text, "Список серверов недоступен")} (HTTP ${r.code})")
-            }
-            val o = parseObject(text, "Список серверов имеет некорректный формат")
-            o.getAsJsonArray("servers")?.map { parseServer(it.asJsonObject) } ?: emptyList()
-        }
+    fun clear() {
+        secure.clear()
+        prefs.edit().clear().apply()
     }
-
-    fun clear() { prefs.edit().clear().apply() }
 
     private fun normalizeActivationToken(raw: String): String {
         var value = raw
             .trim()
             .trim('<', '>', '"', '\'', '`')
-
         if (value.isEmpty()) return ""
 
-        // Telegram/browser paste may contain text before the actual DarkTunnel URL.
         val marker = "darktunnel://activate"
         val markerIndex = value.indexOf(marker, ignoreCase = true)
         if (markerIndex >= 0) {
@@ -132,28 +142,25 @@ class ApiClient(private val context: Context) {
             val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
             val scheme = uri.scheme?.lowercase()
             val host = uri.host?.lowercase()
-            if (scheme == "darktunnel" && (host == "activate" || host == null)) {
-                listOf("d", "token", "code").forEach { key ->
-                    uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            if (scheme == "darktunnel" && host == "activate") {
+                return listOf("d", "token", "code").firstNotNullOfOrNull { key ->
+                    uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotEmpty() }
                 }
             }
             if (scheme == "http" || scheme == "https") {
-                listOf("d", "token", "code").forEach { key ->
-                    uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+                return listOf("d", "token", "code").firstNotNullOfOrNull { key ->
+                    uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotEmpty() }
                 }
             }
             return null
         }
 
         fromUri(value)?.let { return it }
-
-        // Handle percent-encoded deep links copied from a browser/Telegram.
         runCatching { Uri.decode(value) }
             .getOrNull()
             ?.takeIf { it != value }
             ?.let { decoded -> fromUri(decoded)?.let { return it } }
 
-        // A raw activation token is already a valid backend input.
         return value.trim()
     }
 
@@ -172,17 +179,24 @@ class ApiClient(private val context: Context) {
     }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Не удалось активировать приглашение"
 
     private fun parseServer(s: JsonObject) = Server(
-        s["id"]?.asString.orEmpty(),
-        s["name"]?.asString.orEmpty(),
-        s["country_name"]?.asString.orEmpty(),
-        s["city"]?.asString.orEmpty(),
-        flag(s["country_code"]?.asString.orEmpty()),
-        s["host"]?.asString.orEmpty(),
-        s["port"]?.asInt ?: 0,
-        s["online"]?.asBoolean ?: false,
-        s["latency_ms"]?.takeUnless { it.isJsonNull }?.asInt,
-        s["amnezia_config"]?.takeUnless { it.isJsonNull }?.asString
+        id = s["id"]?.asString.orEmpty(),
+        name = s["name"]?.asString.orEmpty(),
+        country = s["country_name"]?.asString.orEmpty(),
+        city = s["city"]?.asString.orEmpty(),
+        flag = flag(s["country_code"]?.asString.orEmpty()),
+        host = s["host"]?.asString.orEmpty(),
+        port = s["port"]?.asInt ?: 0,
+        online = s["online"]?.asBoolean ?: false,
+        latencyMs = s["latency_ms"]?.takeUnless { it.isJsonNull }?.asInt,
+        amneziaConfig = s["amnezia_config"]?.takeUnless { it.isJsonNull }?.asString
     )
+
+    private fun validateServer(server: Server) {
+        require(server.id.isNotBlank()) { "Сервер имеет некорректный идентификатор" }
+        require(server.host.isNotBlank()) { "Сервер имеет некорректный адрес" }
+        require(server.port in 1..65535) { "Сервер имеет некорректный порт" }
+        require(server.amneziaConfig?.isNotBlank() == true) { "У сервера нет конфигурации AmneziaWG" }
+    }
 
     private fun flag(code: String): String {
         if (code.length != 2) return "🌐"
