@@ -25,13 +25,12 @@ jobs:
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Build release APK
         run: gradle --no-daemon --stacktrace :app:assembleRelease
-      - name: Upload APKs
+      - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: DarkTunnel-Android
-          path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-# CI: build current Android sources; no application-code changes.
+# The debug APK is signed by the Android Gradle plugin and is directly installable.
+# The release APK remains unsigned until a production signing key is configured.
