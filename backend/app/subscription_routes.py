@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -73,6 +73,70 @@ def _server_payload(node: ServerNode, config: dict[str, object], health: ServerH
         "latency_ms": health.latency_ms if health else None,
         "online": bool(health.online) if health else True,
         "amnezia_config": awg or None,
+    }
+
+
+@router.post("/subscription/access/redeem")
+async def redeem_subscription_access(
+    body: dict[str, str],
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Exchange a subscription access link for a device token used by the app."""
+    token = str(body.get("token", "")).strip()
+    installation_id = str(body.get("installation_id", "")).strip()
+    public_key = str(body.get("public_key", "")).strip()
+    if not token or not installation_id or not public_key:
+        raise HTTPException(status_code=400, detail="Некорректная ссылка подписки или данные устройства")
+
+    _, user = await resolve_subscription_access(session, token)
+    user = _validate_user(user)
+    now = datetime.now(UTC)
+
+    device = await session.scalar(select(Device).where(Device.installation_id == installation_id).with_for_update())
+    if device is not None and device.user_id != user.id:
+        raise HTTPException(status_code=409, detail="Это устройство уже привязано к другой подписке")
+
+    if device is None:
+        device = Device(
+            user_id=user.id,
+            installation_id=installation_id,
+            public_key=public_key,
+            app_version=str(body.get("app_version", "")),
+            ios_version=str(body.get("android_version", "")),
+            last_seen_at=now,
+        )
+        session.add(device)
+        await session.flush()
+    else:
+        device.public_key = public_key
+        device.app_version = str(body.get("app_version", ""))
+        device.ios_version = str(body.get("android_version", ""))
+        device.revoked_at = None
+        device.last_seen_at = now
+
+    import secrets
+    refresh_token = secrets.token_urlsafe(32)
+    device.auth_token_hash = hash_token(refresh_token)
+
+    settings = get_settings()
+    node = await session.scalar(select(ServerNode).where(
+        ServerNode.host == settings.wdtt_public_host,
+        ServerNode.archived_at.is_(None),
+    ))
+    if node is None:
+        raise HTTPException(status_code=503, detail="Основной VPN-сервер недоступен")
+    config = await _server_config(session, node)
+    health = await session.scalar(select(ServerHealth).where(
+        ServerHealth.server_id == node.id,
+    ).order_by(ServerHealth.timestamp.desc()).limit(1))
+
+    await session.commit()
+    return {
+        "refresh_token": refresh_token,
+        "subscription_expires_at": user.subscription_expires_at,
+        "lifetime": user.lifetime,
+        "user_status": user.status.value,
+        "server": _server_payload(node, config, health),
     }
 
 
