@@ -22,13 +22,20 @@ struct DarkTunnelApp: App {
             .preferredColorScheme(.dark)
             .onAppear {
                 subscription.start()
-                Task { await appUpdates.check() }
+                Task {
+                    await appUpdates.check()
+                    await AnnouncementFeed.shared.refresh()
+                }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     Task {
                         await subscription.checkNow()
                         await appUpdates.check()
+                        await AnnouncementFeed.shared.refresh()
+                        if viewModel.state == .connected {
+                            viewModel.syncLiveActivity()
+                        }
                     }
                 }
             }
