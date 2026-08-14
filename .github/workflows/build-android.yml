@@ -33,3 +33,5 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
+
+# Force CI to run against the latest Android build configuration.
