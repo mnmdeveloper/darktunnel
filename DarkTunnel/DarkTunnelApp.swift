@@ -22,10 +22,21 @@ struct DarkTunnelApp: App {
             .preferredColorScheme(.dark)
             .onAppear {
                 subscription.start()
+                if activation.isActivated {
+                    subscription.authorizeAfterSuccessfulActivation()
+                }
                 Task {
+                    await subscription.checkNow()
                     await appUpdates.check()
                     await AnnouncementFeed.shared.refresh()
                 }
+            }
+            .onChange(of: activation.isActivated) { _, activated in
+                guard activated else { return }
+                // Redeem already authenticated this device. Switch the UI
+                // immediately, then perform the authoritative status check.
+                subscription.authorizeAfterSuccessfulActivation()
+                Task { await subscription.checkNow() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
