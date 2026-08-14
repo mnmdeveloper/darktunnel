@@ -41,8 +41,11 @@ jobs:
           rm -rf .tmp build
           chmod -R u+rwX .
           mkdir -m 700 -p .tmp
+          PATCH_TMP="$RUNNER_TEMP/darktunnel-patch-tmp"
+          rm -rf "$PATCH_TMP"
+          mkdir -m 700 -p "$PATCH_TMP"
           make clean
-          make xcframework
+          TMPDIR="$PATCH_TMP" make xcframework
           test -d build/WireGuardTURN.xcframework
       - name: Build AmneziaWG bridge framework
         working-directory: Vendor/amneziawg-apple/Sources/WireGuardKitGo
@@ -51,8 +54,11 @@ jobs:
           rm -rf .tmp out
           chmod -R u+rwX .
           mkdir -m 700 -p .tmp
+          PATCH_TMP="$RUNNER_TEMP/amneziawg-patch-tmp"
+          rm -rf "$PATCH_TMP"
+          mkdir -m 700 -p "$PATCH_TMP"
           make clean
-          make build PLATFORM_NAME=iphoneos ARCHS=arm64 CONFIGURATION_BUILD_DIR="$PWD/out"
+          TMPDIR="$PATCH_TMP" make build PLATFORM_NAME=iphoneos ARCHS=arm64 CONFIGURATION_BUILD_DIR="$PWD/out"
           test -f out/libwg-go.a
           mkdir -p out/AmneziaWG.framework/Headers out/AmneziaWG.framework/Modules
           cp out/libwg-go.a out/AmneziaWG.framework/AmneziaWG
