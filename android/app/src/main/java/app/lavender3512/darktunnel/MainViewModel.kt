@@ -29,16 +29,28 @@ class MainViewModel : ViewModel() {
     }
 
     fun activate(token: String) {
+        val clean = token.trim()
+        if (clean.isEmpty()) {
+            _ui.value = _ui.value.copy(error = "Вставьте ссылку подписки или код доступа")
+            return
+        }
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, error = null)
-            val result = withContext(Dispatchers.IO) { api!!.activate(token) }
-            result.onSuccess {
-                _ui.value = _ui.value.copy(activated = true, loading = false)
+            val result = withContext(Dispatchers.IO) { api!!.activate(clean) }
+            result.onSuccess { activation ->
+                _ui.value = _ui.value.copy(
+                    activated = true,
+                    loading = false,
+                    error = null,
+                    selected = activation.server,
+                    servers = listOf(activation.server),
+                    ping = activation.server.latencyMs?.let { "$it мс" } ?: "—"
+                )
                 refresh()
             }.onFailure {
                 _ui.value = _ui.value.copy(
                     loading = false,
-                    error = it.message ?: "Ошибка активации"
+                    error = it.message ?: "Не удалось войти по подписке"
                 )
             }
         }
@@ -53,17 +65,31 @@ class MainViewModel : ViewModel() {
                 val selected = list.firstOrNull { it.id == selectedId }
                     ?: choose(list)
                 _ui.value = _ui.value.copy(
+                    activated = true,
                     loading = false,
                     servers = list,
                     selected = selected,
-                    ping = selected?.latencyMs?.let { "$it мс" } ?: "—"
+                    ping = selected?.latencyMs?.let { "$it мс" } ?: "—",
+                    error = if (list.isEmpty()) "Подписка активна, но серверы пока недоступны" else null
                 )
-            }.onFailure {
-                _ui.value = _ui.value.copy(
-                    loading = false,
-                    activated = api!!.isActivated(),
-                    error = it.message ?: "Не удалось загрузить серверы"
-                )
+            }.onFailure { error ->
+                val message = error.message ?: "Не удалось загрузить серверы"
+                if (message.contains("HTTP 401") || message.contains("HTTP 403")) {
+                    api!!.clear()
+                    awg?.disconnect()
+                    pendingConfig = null
+                    _ui.value = UiState(
+                        activated = false,
+                        connected = false,
+                        error = "Сессия подписки истекла. Вставьте ссылку подписки ещё раз."
+                    )
+                } else {
+                    _ui.value = _ui.value.copy(
+                        loading = false,
+                        activated = api!!.isActivated(),
+                        error = message
+                    )
+                }
             }
         }
     }
@@ -76,7 +102,8 @@ class MainViewModel : ViewModel() {
     fun select(server: Server) {
         _ui.value = _ui.value.copy(
             selected = server,
-            ping = server.latencyMs?.let { "$it мс" } ?: "—"
+            ping = server.latencyMs?.let { "$it мс" } ?: "—",
+            error = null
         )
     }
 
@@ -84,7 +111,11 @@ class MainViewModel : ViewModel() {
         if (_ui.value.connected) return false
         val server = _ui.value.selected ?: choose(_ui.value.servers)
         if (server == null) {
-            _ui.value = _ui.value.copy(error = "Нет доступного VPN-сервера")
+            _ui.value = _ui.value.copy(error = "Нет доступного VPN-сервера. Обновите список.")
+            return false
+        }
+        if (!server.online) {
+            _ui.value = _ui.value.copy(error = "Выбранный сервер сейчас недоступен")
             return false
         }
         val config = server.amneziaConfig?.trim().orEmpty()
@@ -104,7 +135,7 @@ class MainViewModel : ViewModel() {
             _ui.value = _ui.value.copy(loading = true, error = null)
             val result = withContext(Dispatchers.IO) { awg!!.connect(config) }
             result.onSuccess {
-                _ui.value = _ui.value.copy(loading = false, connected = true)
+                _ui.value = _ui.value.copy(loading = false, connected = true, error = null)
             }.onFailure {
                 _ui.value = _ui.value.copy(
                     loading = false,
@@ -143,9 +174,6 @@ class MainViewModel : ViewModel() {
     }
 
     fun ping(server: Server) {
-        // Server latency comes from the backend health probe. We deliberately do
-        // not perform a raw ICMP/Socket probe from the client because that can
-        // measure a different route than the VPN endpoint and can leak metadata.
         select(server)
     }
 }
