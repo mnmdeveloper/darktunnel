@@ -34,4 +34,4 @@ jobs:
             android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
-# CI: build with the current Android SDK configuration.
+# CI: build current Android sources; no application-code changes.
