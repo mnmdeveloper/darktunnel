@@ -12,8 +12,6 @@ final class SubscriptionGuard: ObservableObject {
 
     private init() {}
 
-    deinit { task?.cancel() }
-
     func start() {
         guard task == nil else { return }
         task = Task { [weak self] in
@@ -24,6 +22,15 @@ final class SubscriptionGuard: ObservableObject {
                 await self?.checkNow()
             }
         }
+    }
+
+    /// Called immediately after a successful redeem. The redeem endpoint has
+    /// already authenticated the device and validated the subscription, so the
+    /// UI must not wait for the next periodic status poll before leaving the
+    /// activation screen.
+    func authorizeAfterSuccessfulActivation() {
+        guard ActivationStore.shared.isActivated else { return }
+        isAuthorized = true
     }
 
     func checkNow() async {
@@ -56,6 +63,8 @@ final class SubscriptionGuard: ObservableObject {
                 LiveActivityController.shared.end()
             }
         } catch {
+            // Keep an already-authorized local session alive through temporary
+            // network/backend outages. An authoritative 401/403 still revokes it.
             AppLog.shared.warning("Subscription", "Проверка подписки недоступна: \(error.localizedDescription)")
         }
     }
