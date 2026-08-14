@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "app.lavender3512.darktunnel"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.lavender3512.darktunnel"
