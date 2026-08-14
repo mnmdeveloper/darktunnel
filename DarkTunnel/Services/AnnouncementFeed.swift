@@ -37,8 +37,14 @@ final class AnnouncementFeed: ObservableObject {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
             struct Envelope: Decodable { let announcements: [DarkTunnelRemoteAnnouncement] }
             let payload = try JSONDecoder().decode(Envelope.self, from: data)
-            home = payload.announcements.filter { $0.placement == "home" }
-            server = payload.announcements.filter { $0.placement == "server" }
+            home = payload.announcements.filter { placement in
+                let value = placement.placement.lowercased()
+                return value == "home" || value == "both" || value == "server" || value == "servers"
+            }
+            server = payload.announcements.filter { placement in
+                let value = placement.placement.lowercased()
+                return value == "server" || value == "servers" || value == "both"
+            }
         } catch {
             AppLog.shared.warning("Announcements", "Не удалось обновить объявления: \(error.localizedDescription)")
         }
