@@ -21,15 +21,19 @@ jobs:
         uses: android-actions/setup-android@v3
       - name: Install Android SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-      - name: Build debug APK
+      - name: Build installable debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Build release APK
         run: gradle --no-daemon --stacktrace :app:assembleRelease
+      - name: Prepare versioned APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/DarkTunnel-Android-v0.2.0.apk
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: DarkTunnel-Android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: DarkTunnel-Android-v0.2.0
+          path: |
+            android/app/build/outputs/apk/debug/DarkTunnel-Android-v0.2.0.apk
+            android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
 # The debug APK is signed by the Android Gradle plugin and is directly installable.
