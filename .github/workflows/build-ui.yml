@@ -6,6 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Final CI trigger: keep vendor patch temp files outside the checked-out tree.
 jobs:
   build:
     runs-on: macos-15
