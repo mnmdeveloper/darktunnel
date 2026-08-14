@@ -8,34 +8,38 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.InetAddress
 
 class MainViewModel : ViewModel() {
     private val _ui = MutableStateFlow(UiState())
     val ui = _ui.asStateFlow()
+
     private var api: ApiClient? = null
     private var awg: AwgController? = null
     private var pendingConfig: String? = null
 
     fun init(context: Context) {
         if (api != null) return
-        api = ApiClient(context)
-        awg = AwgController(context)
-        _ui.value = _ui.value.copy(activated = api!!.isActivated(), connected = awg!!.isConnected())
+        api = ApiClient(context.applicationContext)
+        awg = AwgController(context.applicationContext)
+        _ui.value = _ui.value.copy(
+            activated = api!!.isActivated(),
+            connected = awg!!.isConnected()
+        )
         if (api!!.isActivated()) refresh()
     }
 
-    fun activate(token: String, onDone: (Boolean) -> Unit = {}) {
+    fun activate(token: String) {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, error = null)
-            val r = withContext(Dispatchers.IO) { api!!.activate(token.trim()) }
-            r.onSuccess {
+            val result = withContext(Dispatchers.IO) { api!!.activate(token) }
+            result.onSuccess {
                 _ui.value = _ui.value.copy(activated = true, loading = false)
                 refresh()
-                onDone(true)
             }.onFailure {
-                _ui.value = _ui.value.copy(loading = false, error = it.message ?: "Ошибка активации")
-                onDone(false)
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    error = it.message ?: "Ошибка активации"
+                )
             }
         }
     }
@@ -43,13 +47,23 @@ class MainViewModel : ViewModel() {
     fun refresh() {
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, error = null)
-            val r = withContext(Dispatchers.IO) { api!!.servers() }
-            val list = r.getOrElse { withContext(Dispatchers.IO) { api!!.publicServers() }.getOrElse { emptyList() } }
-            if (list.isEmpty()) {
-                _ui.value = _ui.value.copy(loading = false, error = r.exceptionOrNull()?.message ?: "Нет серверов")
-            } else {
-                val best = choose(list)
-                _ui.value = _ui.value.copy(loading = false, servers = list, selected = best, ping = best?.latencyMs?.let { "$it мс" } ?: "—")
+            val result = withContext(Dispatchers.IO) { api!!.servers() }
+            result.onSuccess { list ->
+                val selectedId = _ui.value.selected?.id
+                val selected = list.firstOrNull { it.id == selectedId }
+                    ?: choose(list)
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    servers = list,
+                    selected = selected,
+                    ping = selected?.latencyMs?.let { "$it мс" } ?: "—"
+                )
+            }.onFailure {
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    activated = api!!.isActivated(),
+                    error = it.message ?: "Не удалось загрузить серверы"
+                )
             }
         }
     }
@@ -57,20 +71,30 @@ class MainViewModel : ViewModel() {
     private fun choose(list: List<Server>): Server? = list
         .filter { it.online && !it.amneziaConfig.isNullOrBlank() }
         .minByOrNull { it.latencyMs ?: Int.MAX_VALUE }
+        ?: list.firstOrNull { !it.amneziaConfig.isNullOrBlank() }
 
     fun select(server: Server) {
-        _ui.value = _ui.value.copy(selected = server, ping = server.latencyMs?.let { "$it мс" } ?: "—")
+        _ui.value = _ui.value.copy(
+            selected = server,
+            ping = server.latencyMs?.let { "$it мс" } ?: "—"
+        )
     }
 
-    fun requestConnect(): String? {
-        val s = _ui.value.selected ?: choose(_ui.value.servers)
-        if (s == null) return null
-        if (s.amneziaConfig.isNullOrBlank()) {
-            _ui.value = _ui.value.copy(error = "У выбранного сервера нет конфигурации AmneziaWG")
-            return null
+    fun requestConnect(): Boolean {
+        if (_ui.value.connected) return false
+        val server = _ui.value.selected ?: choose(_ui.value.servers)
+        if (server == null) {
+            _ui.value = _ui.value.copy(error = "Нет доступного VPN-сервера")
+            return false
         }
-        pendingConfig = s.amneziaConfig
-        return pendingConfig
+        val config = server.amneziaConfig?.trim().orEmpty()
+        if (config.isEmpty()) {
+            _ui.value = _ui.value.copy(error = "У выбранного сервера нет конфигурации AmneziaWG")
+            return false
+        }
+        pendingConfig = config
+        _ui.value = _ui.value.copy(selected = server, error = null)
+        return true
     }
 
     fun finishConnect() {
@@ -78,30 +102,50 @@ class MainViewModel : ViewModel() {
         pendingConfig = null
         viewModelScope.launch {
             _ui.value = _ui.value.copy(loading = true, error = null)
-            val r = withContext(Dispatchers.IO) { awg!!.connect(config) }
-            r.onSuccess { _ui.value = _ui.value.copy(loading = false, connected = true) }
-                .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message ?: "Не удалось подключиться") }
+            val result = withContext(Dispatchers.IO) { awg!!.connect(config) }
+            result.onSuccess {
+                _ui.value = _ui.value.copy(loading = false, connected = true)
+            }.onFailure {
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    connected = false,
+                    error = it.message ?: "Не удалось подключиться к VPN"
+                )
+            }
         }
     }
 
+    fun cancelPendingConnect() {
+        pendingConfig = null
+        _ui.value = _ui.value.copy(loading = false)
+    }
+
     fun disconnect() {
+        pendingConfig = null
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { awg?.disconnect() }
-            _ui.value = _ui.value.copy(connected = false)
+            val result = withContext(Dispatchers.IO) { awg!!.disconnect() }
+            result.onSuccess {
+                _ui.value = _ui.value.copy(connected = false, loading = false, error = null)
+            }.onFailure {
+                _ui.value = _ui.value.copy(
+                    loading = false,
+                    error = it.message ?: "Не удалось отключить VPN"
+                )
+            }
+        }
+    }
+
+    fun syncConnectionState() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val connected = awg?.isConnected() ?: false
+            _ui.value = _ui.value.copy(connected = connected)
         }
     }
 
     fun ping(server: Server) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val start = System.nanoTime()
-            val ms = runCatching { InetAddress.getByName(server.host).isReachable(1800) }
-                .fold({ if (it) ((System.nanoTime() - start) / 1_000_000).toInt() else 0 }, { 0 })
-            if (ms > 0) {
-                val currentSelected = _ui.value.selected
-                val list = _ui.value.servers.map { if (it.id == server.id) it.copy(latencyMs = ms) else it }
-                val selected = if (currentSelected?.id == server.id) currentSelected.copy(latencyMs = ms) else currentSelected
-                _ui.value = _ui.value.copy(servers = list, selected = selected, ping = "$ms мс")
-            }
-        }
+        // Server latency comes from the backend health probe. We deliberately do
+        // not perform a raw ICMP/Socket probe from the client because that can
+        // measure a different route than the VPN endpoint and can leak metadata.
+        select(server)
     }
 }
