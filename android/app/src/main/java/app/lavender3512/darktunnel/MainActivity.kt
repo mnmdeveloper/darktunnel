@@ -28,6 +28,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
 
+private val Bg = Color(0xFF080A0F)
+private val Panel = Color(0xFF151820)
+private val Panel2 = Color(0xFF1C2029)
+private val Secondary = Color(0xFF9BA1AE)
+private val Accent = Color(0xFFB9E7B0)
+
 class MainActivity : ComponentActivity() {
     private val vm by viewModels<MainViewModel>()
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,76 +48,206 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
     private fun handleIntent(intent: Intent) {
-        intent.data?.takeIf { it.scheme == "darktunnel" && it.host == "activate" }?.let { url ->
-            url.getQueryParameter("d")?.takeIf { it.isNotBlank() }?.let(vm::activate)
-        }
+        intent.data?.takeIf { it.scheme.equals("darktunnel", true) && it.host.equals("activate", true) }
+            ?.getQueryParameter("d")?.takeIf { it.isNotBlank() }?.let(vm::activate)
     }
 }
 
-@Composable fun DarkTunnelApp(vm: MainViewModel) {
+@Composable
+fun DarkTunnelApp(vm: MainViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var settings by remember { mutableStateOf(false) }
-    var activationToken by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
     val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { vm.finishConnect() }
     MaterialTheme(colorScheme = darkScheme) {
-        if (!ui.activated) ActivationScreen(ui, activationToken, { activationToken = it }, { vm.activate(activationToken) })
-        else if (settings) SettingsScreen(ui, { settings = false }, { vm.select(it); settings = false }, { vm.refresh() })
-        else HomeScreen(ui, { settings = true }, { vm.refresh() }, {
-            val cfg = vm.requestConnect()
-            if (cfg != null) {
-                val intent = VpnService.prepare(context)
-                if (intent != null) vpnPermission.launch(intent) else vm.finishConnect()
-            }
-        }, { vm.disconnect() })
-    }
-}
-
-private val darkScheme = darkColorScheme(background = Color(0xFF08090D), surface = Color(0xFF15171D), surfaceVariant = Color(0xFF20232B), primary = Color.White, onPrimary = Color.Black, onSurface = Color.White, onSurfaceVariant = Color(0xFFA8ABB5))
-
-@Composable fun ActivationScreen(ui: UiState, token: String, onToken: (String) -> Unit, onActivate: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF050609), Color(0xFF11151D)))), contentAlignment = Alignment.Center) {
-        Column(Modifier.padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("◈", fontSize = 58.sp, fontWeight = FontWeight.Bold)
-            Text("DarkTunnel", fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            Text("Вставьте приглашение из Telegram", color = Color(0xFFA8ABB5))
-            OutlinedTextField(value = token, onValueChange = onToken, singleLine = true, placeholder = { Text("darktunnel://activate?d=…") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = onActivate, enabled = token.isNotBlank() && !ui.loading, modifier = Modifier.fillMaxWidth()) { if (ui.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Активировать") }
-            ui.error?.let { Text(it, color = Color(0xFFFF7B72), fontSize = 13.sp) }
+        when {
+            !ui.activated -> ActivationScreen(ui, token, { token = it }, { vm.activate(token) })
+            settings -> SettingsScreen(ui, { settings = false }, { vm.select(it); settings = false }, vm::refresh)
+            else -> HomeScreen(ui, { settings = true }, vm::refresh, {
+                if (vm.requestConnect() != null) {
+                    val intent = VpnService.prepare(context)
+                    if (intent != null) vpnPermission.launch(intent) else vm.finishConnect()
+                }
+            }, vm::disconnect)
         }
     }
 }
 
-@Composable fun HomeScreen(ui: UiState, onSettings: () -> Unit, onRefresh: () -> Unit, onConnect: () -> Unit, onDisconnect: () -> Unit) {
-    Box(Modifier.fillMaxSize()) {
-        MapBackdrop()
-        Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+private val darkScheme = darkColorScheme(
+    background = Bg, surface = Panel, surfaceVariant = Panel2,
+    primary = Color.White, onPrimary = Color.Black,
+    onSurface = Color.White, onSurfaceVariant = Secondary
+)
+
+@Composable
+private fun BrandMark(size: Int = 54) {
+    Canvas(Modifier.size(size.dp)) {
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val r = size.minDimension * .31f
+        fun diamond(radius: Float, stroke: Float, color: Color) {
+            val p = androidx.compose.ui.graphics.Path().apply {
+                moveTo(c.x, c.y - radius); lineTo(c.x + radius, c.y); lineTo(c.x, c.y + radius); lineTo(c.x - radius, c.y); close()
+            }
+            drawPath(p, color, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        }
+        diamond(r, 3.2f, Color.White)
+        diamond(r * .56f, 3.2f, Color(0xFF7E8795))
+    }
+}
+
+@Composable
+fun ActivationScreen(ui: UiState, token: String, onToken: (String) -> Unit, onActivate: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF06070A), Bg)))) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 22.dp).align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            BrandMark(64)
+            Spacer(Modifier.height(18.dp))
+            Text("DarkTunnel", color = Color.White, fontSize = 31.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("Приватный доступ в интернет", color = Secondary, fontSize = 15.sp)
+            Spacer(Modifier.height(30.dp))
+            Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), color = Panel) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Активация", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Вставьте приглашение из Telegram", color = Secondary, fontSize = 14.sp)
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = onToken,
+                        singleLine = true,
+                        textStyle = LocalTextStyle.current.copy(color = Color.White, fontSize = 15.sp),
+                        placeholder = { Text("darktunnel://activate?d=…", color = Color(0xFF606674), fontSize = 14.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(17.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF6F7786), unfocusedBorderColor = Color(0xFF343945),
+                            cursorColor = Color.White, focusedTextColor = Color.White, unfocusedTextColor = Color.White
+                        )
+                    )
+                    Button(
+                        onClick = onActivate,
+                        enabled = token.isNotBlank() && !ui.loading,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = RoundedCornerShape(17.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                    ) {
+                        if (ui.loading) CircularProgressIndicator(Modifier.size(19.dp), color = Color.Black, strokeWidth = 2.dp)
+                        else Text("Активировать", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    ui.error?.let { Text(it, color = Color(0xFFFF807B), fontSize = 13.sp) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeScreen(ui: UiState, onSettings: () -> Unit, onRefresh: () -> Unit, onConnect: () -> Unit, onDisconnect: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Bg)) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(Brush.verticalGradient(listOf(Color(0xFF0D1418), Bg)))
+            for (i in 0..8) drawLine(Color(0x101FAF96), Offset(0f, size.height * i / 9f), Offset(size.width, size.height * (i + 1) / 10f), 2f)
+        }
+        Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("DarkTunnel", fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(if (ui.connected) "Подключено" else "Подписка активна", color = Color(0xFFA8ABB5)) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = onRefresh) { Text("↻", fontSize = 28.sp) }; TextButton(onClick = onSettings) { Text("⚙", fontSize = 25.sp) } }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BrandMark(38); Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("DarkTunnel", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text(if (ui.connected) "Подключено" else "Готов к подключению", color = Secondary, fontSize = 13.sp)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onRefresh) { Text("↻", color = Color.White, fontSize = 26.sp) }
+                    TextButton(onClick = onSettings) { Text("⚙", color = Color.White, fontSize = 24.sp) }
+                }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) { Metric("365 дн.", "до окончания", Modifier.weight(1f)); Metric(ui.servers.size.toString(), "серверов", Modifier.weight(1f)) }
-            Spacer(Modifier.height(130.dp))
-            ui.selected?.let { server -> ServerCard(server, ui.ping) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Metric("${ui.servers.size}", "серверов", Modifier.weight(1f))
+                Metric(if (ui.connected) "ON" else "OFF", "статус", Modifier.weight(1f))
+            }
+            ui.selected?.let { ServerCard(it, ui.ping) }
             Spacer(Modifier.weight(1f))
-            Button(onClick = if (ui.connected) onDisconnect else onConnect, modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = if (ui.connected) Color(0xFFE8E8EA) else Color.White, contentColor = Color.Black)) { Text(if (ui.connected) "Отключиться" else "Подключиться", fontSize = 18.sp, fontWeight = FontWeight.SemiBold) }
-            ui.error?.let { Text(it, color = Color(0xFFFF7B72), fontSize = 13.sp, modifier = Modifier.padding(bottom = 4.dp)) }
+            Button(
+                onClick = if (ui.connected) onDisconnect else onConnect,
+                modifier = Modifier.fillMaxWidth().height(60.dp), shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+            ) { Text(if (ui.connected) "Отключиться" else "Подключиться", fontSize = 18.sp, fontWeight = FontWeight.SemiBold) }
+            ui.error?.let { Text(it, color = Color(0xFFFF807B), fontSize = 13.sp) }
         }
     }
 }
 
-@Composable fun MapBackdrop() {
-    Canvas(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0B1017), Color(0xFF07100F)))) ) {
-        val w = size.width
-        val h = size.height
-        for (i in 0..11) drawLine(color = Color(0x151B9C83), start = Offset(0f, h * (i / 12f)), end = Offset(w, h * ((i + 2) / 12f)), strokeWidth = 3f)
-        for (i in 0..7) drawCircle(color = Color(0x1200A58C), radius = 18f, center = Offset(w * (i / 8f), h * (0.22f + (i % 3) * 0.18f)))
-        drawLine(color = Color(0x2268B7A0), start = Offset(w * .05f, h * .55f), end = Offset(w * .38f, h * .42f), strokeWidth = 5f)
-        drawLine(color = Color(0x2268B7A0), start = Offset(w * .38f, h * .42f), end = Offset(w * .75f, h * .5f), strokeWidth = 5f)
+@Composable
+fun Metric(value: String, label: String, modifier: Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(20.dp), color = Color(0xCC171A21)) {
+        Column(Modifier.padding(17.dp)) {
+            Text(value, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = Secondary, fontSize = 13.sp)
+        }
     }
 }
 
-@Composable fun Metric(value: String, label: String, modifier: Modifier) { Surface(modifier, shape = RoundedCornerShape(22.dp), color = Color(0xB8171A20)) { Column(Modifier.padding(18.dp)) { Text(value, fontSize = 24.sp, fontWeight = FontWeight.Bold); Text(label, color = Color(0xFFA8ABB5)) } } }
-@Composable fun ServerCard(server: Server, ping: String) { Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = Color(0xE9161A21)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text(if (server.online) "✓ Подключение доступно" else "⚠ Сервер недоступен", color = if (server.online) Color.White else Color(0xFFFFB454), fontWeight = FontWeight.SemiBold); Text(if (server.city.isBlank()) server.name else server.city, fontSize = 27.sp, fontWeight = FontWeight.Bold); Text("AmneziaWG", color = Color(0xFFA8ABB5)) }; Text(server.flag, fontSize = 28.sp) }; HorizontalDivider(color = Color(0x22FFFFFF)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Пинг  $ping", color = Color(0xFFA8ABB5)); Text("${server.port}", color = Color(0xFFA8ABB5)) } } } }
+@Composable
+fun ServerCard(server: Server, ping: String) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(25.dp), color = Color(0xEE171A21)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (server.online) "●  Сервер доступен" else "●  Сервер недоступен", color = if (server.online) Accent else Color(0xFFFFB454), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(5.dp))
+                    Text(if (server.city.isBlank()) server.name else server.city, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                    Text("AmneziaWG", color = Secondary, fontSize = 14.sp)
+                }
+                Text(server.flag, fontSize = 28.sp)
+            }
+            HorizontalDivider(color = Color(0x22FFFFFF))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Пинг  $ping", color = Secondary, fontSize = 13.sp)
+                Text("${server.port}", color = Secondary, fontSize = 13.sp)
+            }
+        }
+    }
+}
 
-@Composable fun SettingsScreen(ui: UiState, onBack: () -> Unit, onSelect: (Server) -> Unit, onRefresh: () -> Unit) { Column(Modifier.fillMaxSize().background(Color(0xFF08090D)).padding(18.dp)) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("Настройки", fontSize = 30.sp, fontWeight = FontWeight.Bold); TextButton(onClick = onBack) { Text("✕", fontSize = 26.sp) } }; Spacer(Modifier.height(18.dp)); Text("СКОРОСТЬ", color = Color(0xFF8D919C), fontWeight = FontWeight.Bold, letterSpacing = 2.sp); Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(24.dp), color = Color(0xFF181A1F)) { Column(Modifier.padding(18.dp)) { Text("Стандарт", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Text("5 соединений — режим по умолчанию", color = Color(0xFFA8ABB5)); Spacer(Modifier.height(14.dp)); Text("Максимум", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Text("10 соединений — вручную", color = Color(0xFFA8ABB5)) } }; Spacer(Modifier.height(24.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("СЕРВЕР", color = Color(0xFF8D919C), fontWeight = FontWeight.Bold, letterSpacing = 2.sp); TextButton(onClick = onRefresh) { Text("Обновить") } }; Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(24.dp), color = Color(0xFF181A1F)) { Column(Modifier.padding(vertical = 8.dp)) { Row(Modifier.fillMaxWidth().clickable { ui.servers.firstOrNull()?.let(onSelect) }.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) { Column { Text("Автовыбор", fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Text("Онлайн AmneziaWG • минимальная задержка", color = Color(0xFFA8ABB5)) }; Text("✓", fontSize = 24.sp) } } }; Spacer(Modifier.height(20.dp)); Text("ДОСТУПНЫЕ СЕРВЕРЫ", color = Color(0xFF8D919C), fontWeight = FontWeight.Bold, letterSpacing = 2.sp); LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) { items(ui.servers) { s -> Surface(Modifier.fillMaxWidth().clickable { onSelect(s) }, shape = RoundedCornerShape(18.dp), color = Color(0xFF181A1F)) { Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.flag, fontSize = 24.sp); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(if (s.city.isBlank()) s.name else s.city, fontWeight = FontWeight.SemiBold); Text(if (s.online) "AmneziaWG" else "Недоступен", color = Color(0xFFA8ABB5), fontSize = 13.sp) }; Text(s.latencyMs?.let { "$it мс" } ?: "—", color = if (s.online) Color(0xFFFFA73A) else Color(0xFF777B84)) } } } } } }
+@Composable
+fun SettingsScreen(ui: UiState, onBack: () -> Unit, onSelect: (Server) -> Unit, onRefresh: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Bg).padding(18.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Настройки", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            TextButton(onClick = onBack) { Text("✕", color = Color.White, fontSize = 24.sp) }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("СЕРВЕР", color = Secondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
+        Surface(Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(23.dp), color = Panel) {
+            Row(Modifier.fillMaxWidth().clickable { ui.servers.firstOrNull()?.let(onSelect) }.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text("Автовыбор", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Минимальная задержка • AmneziaWG", color = Secondary, fontSize = 13.sp)
+                }
+                Text("✓", color = Accent, fontSize = 23.sp)
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("ДОСТУПНЫЕ СЕРВЕРЫ", color = Secondary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
+            TextButton(onClick = onRefresh) { Text("Обновить", color = Color.White) }
+        }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) {
+            items(ui.servers) { s ->
+                Surface(Modifier.fillMaxWidth().clickable { onSelect(s) }, shape = RoundedCornerShape(19.dp), color = Panel) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(s.flag, fontSize = 24.sp); Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(if (s.city.isBlank()) s.name else s.city, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(if (s.online) "AmneziaWG" else "Недоступен", color = Secondary, fontSize = 13.sp)
+                        }
+                        Text(s.latencyMs?.let { "$it мс" } ?: "—", color = Secondary, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
