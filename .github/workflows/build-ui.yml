@@ -6,7 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Final CI trigger: keep vendor patch temp files outside the checked-out tree.
 jobs:
   build:
     runs-on: macos-15
@@ -42,9 +41,9 @@ jobs:
           rm -rf .tmp build
           chmod -R u+rwX .
           mkdir -m 700 -p .tmp
-          PATCH_TMP="$RUNNER_TEMP/darktunnel-patch-tmp"
+          PATCH_TMP="/tmp/darktunnel-patch-tmp"
           rm -rf "$PATCH_TMP"
-          mkdir -m 700 -p "$PATCH_TMP"
+          mkdir -m 777 -p "$PATCH_TMP"
           make clean
           TMPDIR="$PATCH_TMP" make xcframework
           test -d build/WireGuardTURN.xcframework
@@ -55,9 +54,9 @@ jobs:
           rm -rf .tmp out
           chmod -R u+rwX .
           mkdir -m 700 -p .tmp
-          PATCH_TMP="$RUNNER_TEMP/amneziawg-patch-tmp"
+          PATCH_TMP="/tmp/amneziawg-patch-tmp"
           rm -rf "$PATCH_TMP"
-          mkdir -m 700 -p "$PATCH_TMP"
+          mkdir -m 777 -p "$PATCH_TMP"
           make clean
           TMPDIR="$PATCH_TMP" make build PLATFORM_NAME=iphoneos ARCHS=arm64 CONFIGURATION_BUILD_DIR="$PWD/out"
           test -f out/libwg-go.a
