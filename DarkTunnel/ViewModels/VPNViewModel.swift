@@ -277,7 +277,10 @@ final class VPNViewModel: ObservableObject {
     private func selectBestServer(for transport: TransportKind) {
         guard !servers.isEmpty else { return }
         if transport == .amneziaWG {
-            let candidates = servers.filter { remoteServers[$0.id]?.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            let candidates = servers.filter { server in
+                guard let remote = remoteServers[server.id] else { return false }
+                return remote.online && !(remote.amneziaConfig?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
             if let best = candidates.min(by: latencyOrder) { selectedServer = best; return }
         }
         if let best = servers.min(by: latencyOrder) { selectedServer = best }
