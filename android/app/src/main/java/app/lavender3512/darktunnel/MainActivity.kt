@@ -166,8 +166,8 @@ fun ActivationScreen(ui: UiState, token: String, onToken: (String) -> Unit, onPa
                         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, unfocusedBorderColor = Stroke, cursorColor = Accent, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton(onClick = onPaste, Modifier.weight(1f)) { Text("Вставить", color = Accent, fontWeight = FontWeight.SemiBold) }
-                        Button(onClick = onActivate, enabled = token.isNotBlank() && !ui.loading, Modifier.weight(1.7f).height(52.dp), RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
+                        TextButton(onClick = onPaste, modifier = Modifier.weight(1f)) { Text("Вставить", color = Accent, fontWeight = FontWeight.SemiBold) }
+                        Button(onClick = onActivate, enabled = token.isNotBlank() && !ui.loading, modifier = Modifier.weight(1.7f).height(52.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)) {
                             if (ui.loading) CircularProgressIndicator(Modifier.size(19.dp), color = Color.Black, strokeWidth = 2.dp) else Text("Войти", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
                     }
