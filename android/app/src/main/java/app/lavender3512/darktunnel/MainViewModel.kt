@@ -62,7 +62,7 @@ class MainViewModel : ViewModel() {
             val result = withContext(Dispatchers.IO) { api!!.servers() }
             result.onSuccess { list ->
                 val selectedId = _ui.value.selected?.id
-                val selected = list.firstOrNull { it.id == selectedId }
+                val selected = list.firstOrNull { it.id == selectedId && it.online && !it.amneziaConfig.isNullOrBlank() }
                     ?: choose(list)
                 _ui.value = _ui.value.copy(
                     activated = true,
@@ -158,10 +158,7 @@ class MainViewModel : ViewModel() {
             result.onSuccess {
                 _ui.value = _ui.value.copy(connected = false, loading = false, error = null)
             }.onFailure {
-                _ui.value = _ui.value.copy(
-                    loading = false,
-                    error = it.message ?: "Не удалось отключить VPN"
-                )
+                _ui.value = _ui.value.copy(loading = false, error = it.message ?: "Не удалось отключить VPN")
             }
         }
     }
