@@ -84,7 +84,7 @@ class ApiClient(private val context: Context) {
     }
 
     private fun executeActivationRequest(request: Request, storedToken: String): Activation {
-        http.newCall(request).execute().use { response ->
+        return http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty().trim()
             if (!response.isSuccessful) throw IllegalStateException("${activationError(text)} (HTTP ${response.code})")
             val objectResponse = parseObject(text, "Сервер авторизации вернул некорректный ответ")
