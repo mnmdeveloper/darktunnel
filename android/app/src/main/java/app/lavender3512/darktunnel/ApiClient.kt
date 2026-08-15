@@ -53,8 +53,6 @@ class ApiClient(private val context: Context) {
         val subscriptionToken = extractSubscriptionToken(value)
         if (subscriptionToken != null) return@runCatching redeemSubscription(subscriptionToken)
 
-        // A plain Telegram subscription code has no URL scheme. Try the subscription
-        // endpoint first; old invitation codes are then handled by the legacy endpoint.
         val plain = extractPlainToken(value)
         if (plain.isNotEmpty()) {
             try { return@runCatching redeemSubscription(plain) }
@@ -109,7 +107,10 @@ class ApiClient(private val context: Context) {
         val token = secret("refresh_token") ?: throw IllegalStateException("Нет активной подписки")
         val request = Request.Builder()
             .url("$base/v1/subscription/servers?installation_id=${Uri.encode(installationId())}")
-            .header("X-Device-Token", token).header("Accept", "application/json").get().build()
+            .header("X-Device-Token", token)
+            .header("Accept", "application/json")
+            .get()
+            .build()
         http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty().trim()
             if (!response.isSuccessful) {
@@ -117,8 +118,18 @@ class ApiClient(private val context: Context) {
                 throw IllegalStateException("${apiError(text, "Сессия подписки недействительна")} (HTTP ${response.code})")
             }
             val objectResponse = parseObject(text, "Список серверов имеет некорректный формат")
-            val servers = objectResponse.getAsJsonArray("servers")?.map { parseServer(it.asJsonObject) } ?: emptyList()
-            servers.forEach(::validateServer)
+            val parsed = objectResponse.getAsJsonArray("servers")?.mapNotNull { element ->
+                runCatching { parseServer(element.asJsonObject) }.getOrNull()
+            } ?: emptyList()
+            val servers = parsed.filter { server ->
+                server.id.isNotBlank() &&
+                    server.host.isNotBlank() &&
+                    server.port in 1..65535 &&
+                    !server.amneziaConfig.isNullOrBlank()
+            }
+            if (servers.isEmpty()) {
+                throw IllegalStateException("Подписка активна, но готовых AmneziaWG-серверов пока нет")
+            }
             servers
         }
     }
