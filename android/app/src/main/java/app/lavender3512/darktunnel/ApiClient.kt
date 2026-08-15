@@ -20,8 +20,8 @@ class ApiClient(private val context: Context) {
     private val secure = SecureStore(context)
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
@@ -29,7 +29,8 @@ class ApiClient(private val context: Context) {
 
     private fun installationId(): String = prefs.getString("installation_id", null)
         ?.takeIf { it.isNotBlank() }
-        ?: UUID.randomUUID().toString().lowercase().also { prefs.edit().putString("installation_id", it).apply() }
+        ?: UUID.randomUUID().toString().lowercase()
+            .also { prefs.edit().putString("installation_id", it).apply() }
 
     private fun publicKey(): String = prefs.getString("public_key", null)
         ?.takeIf { it.isNotBlank() }
@@ -45,23 +46,43 @@ class ApiClient(private val context: Context) {
     }
 
     fun isActivated(): Boolean = !secret("refresh_token").isNullOrBlank()
-    fun activationToken(): String? = secret("activation_token")
 
     fun activate(rawToken: String): Result<Activation> = runCatching {
         val value = rawToken.trim()
         require(value.isNotEmpty()) { "Вставьте ссылку подписки или код доступа" }
-        val subscriptionToken = extractSubscriptionToken(value)
-        if (subscriptionToken != null) return@runCatching redeemSubscription(subscriptionToken)
 
-        val plain = extractPlainToken(value)
-        if (plain.isNotEmpty()) {
-            try { return@runCatching redeemSubscription(plain) }
-            catch (_: Throwable) { return@runCatching redeemActivation(plain) }
+        // Try subscription link first
+        val subscriptionToken = extractSubscriptionToken(value)
+        if (subscriptionToken != null) {
+            return@runCatching trySubscriptionThenActivation(subscriptionToken)
         }
-        redeemActivation(normalizeActivationToken(value))
+
+        // Try plain activation link
+        val activationToken = extractActivationToken(value)
+        if (activationToken != null) {
+            return@runCatching redeemActivation(activationToken)
+        }
+
+        // Plain token - try both endpoints
+        trySubscriptionThenActivation(value)
     }
 
-    private fun requestBody(token: String) = gson.toJson(mapOf(
+    private fun trySubscriptionThenActivation(token: String): Activation {
+        return try {
+            redeemSubscription(token)
+        } catch (e: Exception) {
+            // If subscription endpoint fails (404 = not deployed yet, or wrong token type),
+            // fall back to the activation endpoint which iOS uses
+            try {
+                redeemActivation(token)
+            } catch (e2: Exception) {
+                // Throw the more meaningful error
+                throw e2
+            }
+        }
+    }
+
+    private fun body(token: String) = gson.toJson(mapOf(
         "token" to token,
         "installation_id" to installationId(),
         "public_key" to publicKey(),
@@ -71,31 +92,40 @@ class ApiClient(private val context: Context) {
 
     private fun redeemActivation(token: String): Activation {
         require(token.isNotEmpty()) { "Вставьте код или ссылку подписки" }
-        val request = Request.Builder().url("$base/v1/activation/redeem").post(requestBody(token))
-            .header("Accept", "application/json").build()
-        return executeActivationRequest(request, token)
+        val req = Request.Builder()
+            .url("$base/v1/activation/redeem")
+            .post(body(token))
+            .header("Accept", "application/json")
+            .build()
+        return executeActivationRequest(req, token)
     }
 
     private fun redeemSubscription(token: String): Activation {
         require(token.isNotEmpty()) { "Ссылка подписки пустая" }
-        val request = Request.Builder().url("$base/v1/subscription/access/redeem").post(requestBody(token))
-            .header("Accept", "application/json").build()
-        return executeActivationRequest(request, token)
+        val req = Request.Builder()
+            .url("$base/v1/subscription/access/redeem")
+            .post(body(token))
+            .header("Accept", "application/json")
+            .build()
+        return executeActivationRequest(req, token)
     }
 
     private fun executeActivationRequest(request: Request, storedToken: String): Activation {
         return http.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty().trim()
-            if (!response.isSuccessful) throw IllegalStateException("${activationError(text)} (HTTP ${response.code})")
-            val objectResponse = parseObject(text, "Сервер авторизации вернул некорректный ответ")
-            val serverObject = objectResponse.getAsJsonObject("server")
-                ?: throw IllegalStateException("В ответе авторизации нет сервера")
-            val server = parseServer(serverObject)
-            validateServer(server)
-            val refresh = objectResponse["refresh_token"]?.asString?.trim()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("${apiError(text, "Не удалось войти по подписке")} (HTTP ${response.code})")
+            }
+            val obj = parseObject(text, "Сервер вернул некорректный ответ")
+            val serverObj = obj.getAsJsonObject("server")
+                ?: throw IllegalStateException("В ответе нет данных сервера")
+            val server = parseServer(serverObj)
+            require(server.host.isNotBlank()) { "Сервер имеет некорректный адрес" }
+            require(server.port in 1..65535) { "Сервер имеет некорректный порт" }
+            val refresh = obj["refresh_token"]?.asString?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?: throw IllegalStateException("Сервер не выдал токен устройства")
-            val expires = objectResponse["subscription_expires_at"]?.asString.orEmpty()
+            val expires = obj["subscription_expires_at"]?.asString.orEmpty()
             secure.putString("refresh_token", refresh)
             secure.putString("activation_token", storedToken)
             prefs.edit().putString("expires_at", expires).apply()
@@ -105,31 +135,28 @@ class ApiClient(private val context: Context) {
 
     fun servers(): Result<List<Server>> = runCatching {
         val token = secret("refresh_token") ?: throw IllegalStateException("Нет активной подписки")
-        val request = Request.Builder()
-            .url("$base/v1/subscription/servers?installation_id=${Uri.encode(installationId())}")
+        val url = "$base/v1/subscription/servers?installation_id=${Uri.encode(installationId())}"
+        val req = Request.Builder()
+            .url(url)
             .header("X-Device-Token", token)
             .header("Accept", "application/json")
             .get()
             .build()
-        http.newCall(request).execute().use { response ->
+        http.newCall(req).execute().use { response ->
             val text = response.body?.string().orEmpty().trim()
             if (!response.isSuccessful) {
                 if (response.code == 401 || response.code == 403) secure.remove("refresh_token")
                 throw IllegalStateException("${apiError(text, "Сессия подписки недействительна")} (HTTP ${response.code})")
             }
-            val objectResponse = parseObject(text, "Список серверов имеет некорректный формат")
-            val parsed = objectResponse.getAsJsonArray("servers")?.mapNotNull { element ->
+            val obj = parseObject(text, "Список серверов имеет некорректный формат")
+            val parsed = obj.getAsJsonArray("servers")?.mapNotNull { element ->
                 runCatching { parseServer(element.asJsonObject) }.getOrNull()
             } ?: emptyList()
-            val servers = parsed.filter { server ->
-                server.id.isNotBlank() &&
-                    server.host.isNotBlank() &&
-                    server.port in 1..65535 &&
-                    !server.amneziaConfig.isNullOrBlank()
+            val servers = parsed.filter {
+                it.id.isNotBlank() && it.host.isNotBlank() &&
+                it.port in 1..65535 && !it.amneziaConfig.isNullOrBlank()
             }
-            if (servers.isEmpty()) {
-                throw IllegalStateException("Подписка активна, но готовых AmneziaWG-серверов пока нет")
-            }
+            if (servers.isEmpty()) throw IllegalStateException("Подписка активна, но AmneziaWG-серверов пока нет")
             servers
         }
     }
@@ -138,64 +165,56 @@ class ApiClient(private val context: Context) {
 
     private fun extractSubscriptionToken(raw: String): String? {
         val marker = "darktunnel://subscription"
-        val index = raw.indexOf(marker, ignoreCase = true)
-        val candidate = if (index >= 0) raw.substring(index).takeWhile { !it.isWhitespace() && it != '<' && it != '>' && it != '"' && it != '\'' } else raw
+        val idx = raw.indexOf(marker, ignoreCase = true)
+        val candidate = if (idx >= 0) raw.substring(idx).takeWhile { !it.isWhitespace() }
+                        else if (raw.startsWith("darktunnel://", ignoreCase = true)) raw else null
+        candidate ?: return null
         return fromUri(candidate, "subscription", listOf("t", "token", "code", "d"))
-            ?: runCatching { Uri.decode(candidate) }.getOrNull()?.let { fromUri(it, "subscription", listOf("t", "token", "code", "d")) }
     }
 
-    private fun extractPlainToken(raw: String): String {
-        val decoded = runCatching { Uri.decode(raw) }.getOrDefault(raw).trim()
-        Regex("(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{24,128}(?![A-Za-z0-9_-])").find(decoded)?.value?.let { return it }
-        return decoded
-    }
-
-    private fun normalizeActivationToken(raw: String): String {
-        var value = raw.trim().trim('<', '>', '"', '\'', '`')
-        if (value.isEmpty()) return ""
+    private fun extractActivationToken(raw: String): String? {
         val marker = "darktunnel://activate"
-        val markerIndex = value.indexOf(marker, ignoreCase = true)
-        if (markerIndex >= 0) value = value.substring(markerIndex).takeWhile { !it.isWhitespace() && it != '<' && it != '>' && it != '"' && it != '\'' }
-        fromUri(value, "activate", listOf("d", "token", "code"))?.let { return it }
-        runCatching { Uri.decode(value) }.getOrNull()?.let { fromUri(it, "activate", listOf("d", "token", "code"))?.let { return it } }
-        return value
+        val idx = raw.indexOf(marker, ignoreCase = true)
+        val candidate = if (idx >= 0) raw.substring(idx).takeWhile { !it.isWhitespace() } else null
+        candidate ?: return null
+        return fromUri(candidate, "activate", listOf("d", "token", "code"))
     }
 
     private fun fromUri(candidate: String, expectedHost: String, keys: List<String>): String? {
         val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase()
         val host = uri.host?.lowercase()
-        if (scheme == "darktunnel" && host == expectedHost) return keys.firstNotNullOfOrNull { uri.getQueryParameter(it)?.trim()?.takeIf(String::isNotEmpty) }
-        if (scheme == "http" || scheme == "https") return keys.firstNotNullOfOrNull { uri.getQueryParameter(it)?.trim()?.takeIf(String::isNotEmpty) }
+        if ((scheme == "darktunnel" && (host == expectedHost || host == null)) ||
+            scheme == "http" || scheme == "https") {
+            return keys.firstNotNullOfOrNull {
+                uri.getQueryParameter(it)?.trim()?.takeIf(String::isNotEmpty)
+            }
+        }
         return null
     }
 
-    private fun parseObject(text: String, fallback: String): JsonObject = runCatching { JsonParser.parseString(text).asJsonObject }
-        .getOrElse { throw IllegalStateException("$fallback. Попробуйте ещё раз.") }
+    private fun parseObject(text: String, fallback: String): JsonObject =
+        runCatching { JsonParser.parseString(text).asJsonObject }
+            .getOrElse { throw IllegalStateException("$fallback. Попробуйте ещё раз.") }
 
-    private fun apiError(text: String, fallback: String): String = runCatching { JsonParser.parseString(text).asJsonObject.get("detail")?.asString }
-        .getOrNull()?.takeIf { it.isNotBlank() } ?: fallback
-
-    private fun activationError(text: String): String = runCatching {
-        val o = JsonParser.parseString(text).asJsonObject
-        o.get("detail")?.asString ?: o.get("message")?.asString
-    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Не удалось войти по подписке"
+    private fun apiError(text: String, fallback: String): String =
+        runCatching {
+            val o = JsonParser.parseString(text).asJsonObject
+            o["detail"]?.asString ?: o["message"]?.asString
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: fallback
 
     private fun parseServer(s: JsonObject) = Server(
-        id = s["id"]?.asString.orEmpty(), name = s["name"]?.asString.orEmpty(),
-        country = s["country_name"]?.asString.orEmpty(), city = s["city"]?.asString.orEmpty(),
-        flag = flag(s["country_code"]?.asString.orEmpty()), host = s["host"]?.asString.orEmpty(),
-        port = s["port"]?.asInt ?: 0, online = s["online"]?.asBoolean ?: false,
+        id = s["id"]?.asString.orEmpty(),
+        name = s["name"]?.asString.orEmpty(),
+        country = s["country_name"]?.asString.orEmpty(),
+        city = s["city"]?.asString.orEmpty(),
+        flag = flag(s["country_code"]?.asString.orEmpty()),
+        host = s["host"]?.asString.orEmpty(),
+        port = s["port"]?.asInt ?: 0,
+        online = s["online"]?.asBoolean ?: true,
         latencyMs = s["latency_ms"]?.takeUnless { it.isJsonNull }?.asInt,
         amneziaConfig = s["amnezia_config"]?.takeUnless { it.isJsonNull }?.asString
     )
-
-    private fun validateServer(server: Server) {
-        require(server.id.isNotBlank()) { "Сервер имеет некорректный идентификатор" }
-        require(server.host.isNotBlank()) { "Сервер имеет некорректный адрес" }
-        require(server.port in 1..65535) { "Сервер имеет некорректный порт" }
-        require(server.amneziaConfig?.isNotBlank() == true) { "У сервера нет конфигурации AmneziaWG" }
-    }
 
     private fun flag(code: String): String {
         if (code.length != 2) return "🌐"
