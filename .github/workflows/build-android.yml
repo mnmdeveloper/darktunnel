@@ -26,8 +26,7 @@ jobs:
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/java/app/lavender3512/darktunnel/MainActivity.kt
           test -f app/src/main/java/app/lavender3512/darktunnel/ApiClient.kt
-          grep -F 'darktunnel://subscription' app/src/main/java/app/lavender3512/darktunnel/MainActivity.kt
-          grep -F '/v1/subscription/access/redeem' app/src/main/java/app/lavender3512/darktunnel/ApiClient.kt
+          grep -F 'v1/activation/redeem' app/src/main/java/app/lavender3512/darktunnel/ApiClient.kt
       - name: Build installable debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Build release APK
@@ -44,4 +43,3 @@ jobs:
           if-no-files-found: error
 
 # Debug APK is signed by the Android Gradle plugin and is directly installable.
-# Release APK remains unsigned until a production signing key is configured.
