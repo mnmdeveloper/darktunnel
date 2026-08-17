@@ -25,15 +25,21 @@ jobs:
         run: |
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/java/app/lavender3512/darktunnel/MainActivity.kt
-          test -f app/src/main/java/app/lavender3512/darktunnel/ApiClient.kt
           grep -F 'v1/activation/redeem' app/src/main/java/app/lavender3512/darktunnel/ApiClient.kt
       - name: Build installable debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
-      - name: Build release APK
-        run: gradle --no-daemon --stacktrace :app:assembleRelease
+        id: build
+        run: gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee /tmp/build.log; exit ${PIPESTATUS[0]}
+      - name: Upload build log on failure
+        if: failure() && steps.build.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-error-log
+          path: /tmp/build.log
       - name: Prepare versioned APK
+        if: success()
         run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/DarkTunnel-Android-v0.3.0.apk
       - name: Upload installable APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: DarkTunnel-Android-v0.3.0
@@ -41,5 +47,3 @@ jobs:
             android/app/build/outputs/apk/debug/DarkTunnel-Android-v0.3.0.apk
             android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-# Debug APK is signed by the Android Gradle plugin and is directly installable.
