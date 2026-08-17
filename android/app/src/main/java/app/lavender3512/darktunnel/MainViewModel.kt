@@ -144,7 +144,7 @@ class MainViewModel : ViewModel() {
         pendingConfig = null
         viewModelScope.launch {
             withContext(Dispatchers.IO) { awg!!.disconnect() }
-                .onSuccess { _ui.value = _ui.value.copy(connected = false, loading = false, vpnState = VpnState.DISCONNECTED, error = null) }
+                .onSuccess { _ui.value = _ui.value.copy(loading = false, vpnState = VpnState.DISCONNECTED, error = null) }
                 .onFailure { _ui.value = _ui.value.copy(loading = false, error = it.message) }
         }
     }
