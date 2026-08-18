@@ -38,6 +38,7 @@ class Device(Base):
     installation_id: Mapped[str] = mapped_column(String(128), index=True)
     public_key: Mapped[str] = mapped_column(Text)
     auth_token_hash: Mapped[str] = mapped_column(String(128), default="", index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="unknown", index=True)
     app_version: Mapped[str] = mapped_column(String(64), default="")
     ios_version: Mapped[str] = mapped_column(String(64), default="")
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

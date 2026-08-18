@@ -11,7 +11,7 @@ from .models import SubscriptionAccess, User
 from .security import hash_token
 
 
-ACCESS_SCHEME = "darktunnel://subscription?t="
+ACCESS_SCHEME = "darktunnel://activate?d="
 
 
 def make_access_link(token: str) -> str:
@@ -31,9 +31,9 @@ async def create_subscription_access(session: AsyncSession, user: User, *, revok
 
 
 async def resolve_subscription_access(session: AsyncSession, token: str) -> tuple[SubscriptionAccess, User]:
-    if not token or len(token) > 256: raise HTTPException(status_code=401, detail="Invalid subscription link")
+    if not token or len(token) > 256: raise HTTPException(status_code=401, detail="Invalid activation link")
     row = await session.scalar(select(SubscriptionAccess).where(SubscriptionAccess.token_hash == hash_token(token), SubscriptionAccess.revoked_at.is_(None)))
-    if row is None: raise HTTPException(status_code=401, detail="Subscription link unavailable")
+    if row is None: raise HTTPException(status_code=401, detail="Activation link unavailable")
     user = await session.get(User, row.user_id)
     if user is None: raise HTTPException(status_code=404, detail="Subscription not found")
     row.last_used_at = datetime.now(UTC)

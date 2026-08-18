@@ -32,6 +32,8 @@ async def init_db() -> None:
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_activations_user_id ON activations(user_id)"))
         await connection.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS auth_token_hash VARCHAR(128) NOT NULL DEFAULT ''"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_devices_auth_token_hash ON devices(auth_token_hash)"))
+        await connection.execute(text("ALTER TABLE devices ADD COLUMN IF NOT EXISTS platform VARCHAR(16) NOT NULL DEFAULT 'unknown'"))
+        await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_devices_platform ON devices(platform)"))
         await connection.execute(text("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS color_hex VARCHAR(9) NOT NULL DEFAULT '#60758F'"))
         await connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(64)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_telegram_username ON users(telegram_username)"))

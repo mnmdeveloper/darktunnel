@@ -90,11 +90,7 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     if activation.revoked_at is not None or activation.link_expires_at < now:
         raise ValueError("Activation link unavailable")
 
-    existing_device = await session.scalar(
-        select(Device)
-        .where(Device.installation_id == data.installation_id)
-        .with_for_update()
-    )
+    existing_device = await session.scalar(select(Device).where(Device.installation_id == data.installation_id).with_for_update())
 
     if existing_device is not None:
         user = await session.get(User, existing_device.user_id)
@@ -112,6 +108,7 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
                 raise ValueError("Subscription expired")
 
             existing_device.public_key = data.public_key
+            existing_device.platform = data.platform
             existing_device.app_version = data.app_version
             existing_device.ios_version = data.ios_version
             existing_device.last_seen_at = now
@@ -128,6 +125,7 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         session.add(AuditLog(admin_id=activation.created_by, action="activation.redeem.restore", entity_type="activation", entity_id=str(activation.id)))
 
         existing_device.public_key = data.public_key
+        existing_device.platform = data.platform
         existing_device.app_version = data.app_version
         existing_device.ios_version = data.ios_version
         existing_device.revoked_at = None
@@ -159,9 +157,7 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
     if activation.uses >= activation.max_uses:
         raise ValueError("Activation use limit reached")
 
-    device_count = await session.scalar(
-        select(func.count(Device.id)).where(Device.user_id == user.id, Device.revoked_at.is_(None))
-    )
+    device_count = await session.scalar(select(func.count(Device.id)).where(Device.user_id == user.id, Device.revoked_at.is_(None)))
     if int(device_count or 0) >= activation.max_devices:
         raise ValueError("Device limit reached")
 
@@ -169,6 +165,7 @@ async def redeem_activation(session: AsyncSession, data: ActivationRedeem) -> Ac
         user_id=user.id,
         installation_id=data.installation_id,
         public_key=data.public_key,
+        platform=data.platform,
         app_version=data.app_version,
         ios_version=data.ios_version,
         last_seen_at=now,

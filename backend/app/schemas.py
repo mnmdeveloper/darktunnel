@@ -23,6 +23,7 @@ class ActivationRedeem(BaseModel):
     token: str
     installation_id: str = Field(min_length=8, max_length=128)
     public_key: str = Field(min_length=16, max_length=4096)
+    platform: str = Field(default="unknown", pattern="^(ios|android|unknown)$")
     app_version: str = Field(default="", max_length=64)
     ios_version: str = Field(default="", max_length=64)
 
