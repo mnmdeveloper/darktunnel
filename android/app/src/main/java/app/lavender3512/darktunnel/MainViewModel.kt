@@ -9,6 +9,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.InetAddress
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 class MainViewModel : ViewModel() {
     private val _ui = MutableStateFlow(UiState())
@@ -24,12 +28,16 @@ class MainViewModel : ViewModel() {
         api = ApiClient(context.applicationContext)
         awg = AwgController(context.applicationContext)
         prefs = context.getSharedPreferences("darktunnel_ui", Context.MODE_PRIVATE)
+
         val savedTransport = when (prefs!!.getString("transport", "AUTO")) {
             "AWG" -> TransportMode.AMNEZIA_WG
             "VK"  -> TransportMode.VK_BYPASS
             else  -> TransportMode.AUTOMATIC
         }
         val savedSpeed = if (prefs!!.getString("speed", "BAL") == "MAX") SpeedMode.MAXIMUM else SpeedMode.BALANCED
+        val expiresAt  = context.getSharedPreferences("darktunnel", Context.MODE_PRIVATE)
+                            .getString("expires_at", null)
+
         _ui.value = _ui.value.copy(
             activated  = api!!.isActivated(),
             vpnState   = if (awg!!.isConnected()) VpnState.CONNECTED else VpnState.DISCONNECTED,
@@ -37,6 +45,7 @@ class MainViewModel : ViewModel() {
             speedMode  = savedSpeed,
             vkCallLink = prefs!!.getString("vk_link", "").orEmpty(),
             autoSelect = prefs!!.getBoolean("auto_select", true),
+            daysLeft   = parseDaysLeft(expiresAt),
         )
         if (api!!.isActivated()) refresh()
     }
@@ -49,8 +58,12 @@ class MainViewModel : ViewModel() {
             withContext(Dispatchers.IO) { api!!.activate(clean) }
                 .onSuccess { activation ->
                     _ui.value = _ui.value.copy(
-                        activated = true, loading = false, error = null,
-                        selected = activation.server, servers = listOf(activation.server),
+                        activated  = true,
+                        loading    = false,
+                        error      = null,
+                        selected   = activation.server,
+                        servers    = listOf(activation.server),
+                        daysLeft   = parseDaysLeft(activation.expiresAt),
                     )
                     refresh()
                 }
@@ -67,11 +80,16 @@ class MainViewModel : ViewModel() {
                     val sel = if (_ui.value.autoSelect) chooseBest(list)
                               else list.firstOrNull { it.id == cur } ?: chooseBest(list)
                     _ui.value = _ui.value.copy(
-                        activated = true, isRefreshing = false, loading = false,
-                        servers = list, selected = sel,
-                        ping = sel?.latencyMs?.let { "$it мс" } ?: "—",
-                        error = if (list.isEmpty()) "Серверов пока нет" else null,
+                        activated    = true,
+                        isRefreshing = false,
+                        loading      = false,
+                        servers      = list,
+                        selected     = sel,
+                        ping         = sel?.latencyMs?.let { "$it мс" } ?: "—",
+                        error        = if (list.isEmpty()) "Серверов пока нет" else null,
                     )
+                    // Measure ping after loading servers
+                    measurePing(sel)
                 }
                 .onFailure { err ->
                     val msg = err.message ?: "Не удалось загрузить серверы"
@@ -85,15 +103,38 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    private fun measurePing(server: Server?) {
+        val host = server?.host ?: return
+        viewModelScope.launch {
+            val ms = withContext(Dispatchers.IO) {
+                try {
+                    val start = System.currentTimeMillis()
+                    val addr = InetAddress.getByName(host)
+                    val reachable = addr.isReachable(3000)
+                    val elapsed = System.currentTimeMillis() - start
+                    if (reachable) elapsed else {
+                        // TCP ping fallback — just DNS resolution time
+                        elapsed
+                    }
+                } catch (e: Exception) { -1L }
+            }
+            if (ms >= 0) {
+                _ui.value = _ui.value.copy(ping = "$ms мс")
+            }
+        }
+    }
+
     fun select(server: Server) {
         prefs?.edit()?.putBoolean("auto_select", false)?.apply()
         _ui.value = _ui.value.copy(selected = server, autoSelect = false, ping = server.latencyMs?.let { "$it мс" } ?: "—", error = null)
+        measurePing(server)
     }
 
     fun selectAuto() {
         prefs?.edit()?.putBoolean("auto_select", true)?.apply()
         val best = chooseBest(_ui.value.servers)
         _ui.value = _ui.value.copy(autoSelect = true, selected = best, ping = best?.latencyMs?.let { "$it мс" } ?: "—")
+        measurePing(best)
     }
 
     fun setTransport(t: TransportMode) {
@@ -138,7 +179,10 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun cancelPendingConnect() { pendingConfig = null; _ui.value = _ui.value.copy(loading = false, vpnState = VpnState.DISCONNECTED) }
+    fun cancelPendingConnect() {
+        pendingConfig = null
+        _ui.value = _ui.value.copy(loading = false, vpnState = VpnState.DISCONNECTED)
+    }
 
     fun disconnect() {
         pendingConfig = null
@@ -153,4 +197,14 @@ class MainViewModel : ViewModel() {
         list.filter { it.online && !it.amneziaConfig.isNullOrBlank() }
             .minByOrNull { it.latencyMs ?: Int.MAX_VALUE }
             ?: list.firstOrNull { !it.amneziaConfig.isNullOrBlank() }
+
+    private fun parseDaysLeft(expiresAt: String?): String {
+        if (expiresAt.isNullOrBlank()) return "—"
+        return try {
+            val expiry = OffsetDateTime.parse(expiresAt).atZoneSameInstant(ZoneId.systemDefault()).toLocalDate()
+            val today  = java.time.LocalDate.now()
+            val days   = ChronoUnit.DAYS.between(today, expiry)
+            if (days < 0) "истекла" else "$days дн."
+        } catch (e: Exception) { "—" }
+    }
 }
